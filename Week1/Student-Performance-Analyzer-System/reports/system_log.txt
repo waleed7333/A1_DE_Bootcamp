@@ -1,0 +1,42 @@
+[2026-02-20 17:35:01] ADD student ahmed ID=31
+[2026-02-20 17:37:13] UPDATE grade student=Lucas Green subject=Math 77->88
+[2026-02-20 17:40:03] DELETE student ahmed ID=31
+
+
+
+
+[2026-02-20 18:03:35] LOGIN user=admin role=admin
+[2026-02-20 18:04:47] LOGOUT user=admin
+[2026-02-20 19:17:36] LOGIN user=admin role=admin
+[2026-02-20 19:19:29] ADD student name=Ali id=31
+[2026-02-20 19:20:07] UPDATE grade student=Ali subject=Art 65->97
+[2026-02-20 19:20:49] LOGOUT user=admin
+[2026-02-20 19:21:16] LOGIN user=user role=user
+[2026-02-20 19:21:58] LOGOUT user=user
+[2026-02-20 20:56:38] LOGIN user=admin role=admin
+[2026-02-20 20:58:39] LOGOUT user=admin
+[2026-02-20 21:18:50] LOGIN admin (admin)
+[2026-02-20 21:19:56] LOGOUT admin
+[2026-02-20 21:21:20] LOGIN user=admin role=admin
+[2026-02-20 21:59:48] LOGOUT user=admin
+[2026-02-20 22:03:20] LOGIN user=admin role=admin
+[2026-02-20 22:05:20] UPDATE grade student=Grace Turner subject=Math 93->94
+[2026-02-20 22:05:47] LOGOUT user=admin
+[2026-02-20 22:06:03] LOGIN user=user role=user
+[2026-02-20 22:06:25] LOGOUT user=user
+[2026-02-20 22:07:38] LOGIN user=admin role=admin
+[2026-02-20 22:07:49] LOGOUT user=admin
+[2026-02-20 23:37:35] LOGIN user=admin role=admin
+[2026-02-20 23:54:18] LOGIN user=admin role=admin
+[2026-02-20 23:54:18] SESSION_START user=admin
+[2026-02-20 23:56:59] ADD student: Ahmed (ID: 32)
+[2026-02-20 23:58:28] UPDATE Math for Sophia Garcia: 99
+[2026-02-20 23:59:38] LOGOUT user=admin
+[2026-02-20 23:59:38] SESSION_END user=admin
+[2026-02-21 00:00:16] LOGIN user=user role=user
+[2026-02-21 00:00:16] SESSION_START user=user
+[2026-02-21 00:00:56] LOGOUT user=user
+[2026-02-21 00:00:56] SESSION_END user=user
+[2026-02-21 00:20:34] FAILED_LOGIN attempt for username=admin
+[2026-02-21 00:20:56] FAILED_LOGIN attempt for username=user
+[2026-02-21 00:27:18] ERROR: 
