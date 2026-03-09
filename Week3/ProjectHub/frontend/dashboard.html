@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ProjectHub - Professional Project Management Dashboard">
+    <title>ProjectHub - Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="logo">📊</div>
+                <h1>ProjectHub</h1>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="dashboard.html" class="active">
+                    <span class="icon">🏠</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="projects.html">
+                    <span class="icon">📁</span>
+                    <span>Projects</span>
+                </a>
+                <a href="tasks.html">
+                    <span class="icon">✅</span>
+                    <span>Tasks</span>
+                </a>
+                <a href="users.html">
+                    <span class="icon">👥</span>
+                    <span>Users</span>
+                </a>
+            </nav>
+            
+            <hr class="sidebar-divider">
+            
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="avatar" id="userAvatar">A</div>
+                    <div class="details">
+                        <div class="name" id="userName">Admin</div>
+                        <div class="role">Administrator</div>
+                    </div>
+                </div>
+                <button class="btn-logout" onclick="logout()">
+                    <span>🚪</span>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Dashboard</h1>
+                    <p class="page-subtitle">Welcome back! Here's what's happening today.</p>
+                </div>
+                <div class="page-actions">
+                    <button class="btn btn-secondary" onclick="loadDashboardData()">
+                        <span>🔄</span>
+                        <span>Refresh</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="dashboard-stats">
+                <div class="stat-card projects">
+                    <div class="stat-icon">📁</div>
+                    <div class="stat-info">
+                        <h3 id="projectsCount">0</h3>
+                        <p>Total Projects</p>
+                    </div>
+                    <div class="stat-trend stat-trend-up">
+                        <span>↑ 12%</span>
+                    </div>
+                </div>
+                <div class="stat-card tasks">
+                    <div class="stat-icon">✅</div>
+                    <div class="stat-info">
+                        <h3 id="tasksCount">0</h3>
+                        <p>Total Tasks</p>
+                    </div>
+                    <div class="stat-trend stat-trend-up">
+                        <span>↑ 8%</span>
+                    </div>
+                </div>
+                <div class="stat-card users">
+                    <div class="stat-icon">👥</div>
+                    <div class="stat-info">
+                        <h3 id="usersCount">0</h3>
+                        <p>Team Members</p>
+                    </div>
+                </div>
+                <div class="stat-card pending">
+                    <div class="stat-icon">⏳</div>
+                    <div class="stat-info">
+                        <h3 id="pendingCount">0</h3>
+                        <p>Pending Tasks</p>
+                    </div>
+                    <div class="stat-trend stat-trend-down">
+                        <span>↓ 5%</span>
+                    </div>
+                </div>
+            </div>
+            <!-- Quick Actions -->
+            <div class="quick-actions-section">
+                <h3>Quick Actions</h3>
+                <div class="quick-actions-grid" id="quickActions">
+                </div>
+            </div>
+
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid">
+                <!-- Recent Projects -->
+                <div class="dashboard-card">
+                    <div class="dashboard-card-header">
+                        <h3>Recent Projects</h3>
+                        <a href="projects.html" class="btn btn-sm btn-secondary">View All</a>
+                    </div>
+                    <div class="dashboard-card-body">
+                        <ul class="recent-list" id="recentProjects">
+                            <!-- Projects will be loaded here -->
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Recent Tasks -->
+                <div class="dashboard-card">
+                    <div class="dashboard-card-header">
+                        <h3>Recent Tasks</h3>
+                        <a href="tasks.html" class="btn btn-sm btn-secondary">View All</a>
+                    </div>
+                    <div class="dashboard-card-body">
+                        <ul class="recent-list" id="recentTasks">
+                            <!-- Tasks will be loaded here -->
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Load config.js first, then other scripts -->
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+
+</html>
+

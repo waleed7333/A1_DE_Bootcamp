@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectHub - Users</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="logo">📊</div>
+                <h1>ProjectHub</h1>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">
+                    <span class="icon">🏠</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="projects.html">
+                    <span class="icon">📁</span>
+                    <span>Projects</span>
+                </a>
+                <a href="tasks.html">
+                    <span class="icon">✅</span>
+                    <span>Tasks</span>
+                </a>
+                <a href="users.html" class="active">
+                    <span class="icon">👥</span>
+                    <span>Users</span>
+                </a>
+            </nav>
+            
+            <hr class="sidebar-divider">
+            
+            <div class="sidebar-footer">
+                <button class="btn-logout" onclick="logout()">
+                    <span>🚪</span>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Users</h1>
+                    <p class="page-subtitle">Manage user accounts and permissions</p>
+                </div>
+                <button class="btn btn-primary" onclick="showUserModal()">
+                    <span>+</span>
+                    <span>Add New User</span>
+                </button>
+            </div>
+
+            <!-- Users Table -->
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>User</th>
+                            <th>Email</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Empty State -->
+            <div class="empty-state" id="emptyState" style="display: none;">
+                <div class="empty-state-icon">👥</div>
+                <h3>No users yet</h3>
+                <p>Create your first user to get started</p>
+                <button class="btn btn-primary" onclick="showUserModal()">Add User</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- User Modal -->
+    <div class="modal-overlay" id="userModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">Add New User</h3>
+                <button class="modal-close" onclick="closeUserModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <input type="hidden" id="userId">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="userUsername" placeholder="Enter username" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" id="userEmail" placeholder="Enter email" required>
+                    </div>
+                    <div class="form-group" id="passwordGroup">
+                        <label>Password</label>
+                        <input type="password" id="userPassword" placeholder="Enter password">
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeUserModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveUser()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div class="modal-overlay" id="confirmDialog">
+        <div class="modal confirm-dialog">
+            <div class="confirm-dialog-icon">⚠️</div>
+            <h3 id="confirmTitle">Confirm Delete</h3>
+            <p id="confirmMessage">Are you sure you want to delete this item? This action cannot be undone.</p>
+            <div class="confirm-dialog-buttons">
+                <button class="btn btn-secondary" onclick="closeConfirmDialog()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/users.js"></script>
+</body>
+
+</html>
+

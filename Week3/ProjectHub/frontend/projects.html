@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectHub - Projects</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="logo">📊</div>
+                <h1>ProjectHub</h1>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="dashboard.html">
+                    <span class="icon">🏠</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="projects.html" class="active">
+                    <span class="icon">📁</span>
+                    <span>Projects</span>
+                </a>
+                <a href="tasks.html">
+                    <span class="icon">✅</span>
+                    <span>Tasks</span>
+                </a>
+                <a href="users.html">
+                    <span class="icon">👥</span>
+                    <span>Users</span>
+                </a>
+            </nav>
+            
+            <hr class="sidebar-divider">
+            
+            <div class="sidebar-footer">
+                <button class="btn-logout" onclick="logout()">
+                    <span>🚪</span>
+                    <span>Logout</span>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <div class="page-header">
+                <div>
+                    <h1 class="page-title">Projects</h1>
+                    <p class="page-subtitle">Manage and track all projects</p>
+                </div>
+                <button class="btn btn-primary" onclick="showProjectModal()">
+                    <span>+</span>
+                    <span>Add New Project</span>
+                </button>
+            </div>
+
+            <!-- Projects Grid -->
+            <div class="content-grid" id="projectsGrid">
+            </div>
+
+            <!-- Empty State -->
+            <div class="empty-state" id="emptyState" style="display: none;">
+                <div class="empty-state-icon">📁</div>
+                <h3>No projects yet</h3>
+                <p>Create your first project to get started</p>
+                <button class="btn btn-primary" onclick="showProjectModal()">Add Project</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Project Modal -->
+    <div class="modal-overlay" id="projectModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">Add New Project</h3>
+                <button class="modal-close" onclick="closeProjectModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="projectForm">
+                    <input type="hidden" id="projectId">
+                    <div class="form-group">
+                        <label>Project Title</label>
+                        <input type="text" id="projectTitle" placeholder="Enter project title" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Description</label>
+                        <textarea id="projectDescription" placeholder="Enter project description" rows="4"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Project Owner</label>
+                        <select id="projectOwner" required>
+                            <option value="">Select Owner</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeProjectModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveProject()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Project Detail Modal -->
+    <div class="modal-overlay" id="projectDetailModal">
+        <div class="modal project-detail-modal">
+            <div class="modal-header">
+                <h3>Project Details</h3>
+                <button class="modal-close" onclick="closeProjectDetailModal()">×</button>
+            </div>
+            <div class="modal-body" id="projectDetailContent">
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div class="modal-overlay" id="confirmDialog">
+        <div class="modal confirm-dialog">
+            <div class="confirm-dialog-icon">⚠️</div>
+            <h3 id="confirmTitle">Confirm Delete</h3>
+            <p id="confirmMessage">Are you sure you want to delete this item? This action cannot be undone.</p>
+            <div class="confirm-dialog-buttons">
+                <button class="btn btn-secondary" onclick="closeConfirmDialog()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/projects.js"></script>
+</body>
+
+</html>
+

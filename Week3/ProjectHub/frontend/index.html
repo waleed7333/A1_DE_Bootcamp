@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjectHub - Login</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="login-page">
+        <div class="login-container">
+            <div class="login-branding">
+                <h1>ProjectHub</h1>
+                <p>Professional Project Management Platform</p>
+                <ul class="brand-features">
+                    <li>Manage projects with ease</li>
+                    <li>Track team performance</li>
+                    <li>Modern user interface</li>
+                    <li>High data security</li>
+                </ul>
+            </div>
+            <div class="login-form-section">
+                <h2>Welcome Back</h2>
+                <p>Sign in to continue</p>
+                <div class="login-error" id="loginError"></div>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <input type="text" id="username" placeholder="Enter username" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" id="password" placeholder="Enter password" required>
+                    </div>
+                    <button type="submit" class="btn-login">
+                        <span>Sign In</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="js/config.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/login.js"></script>
+</body>
+
+</html>
+
