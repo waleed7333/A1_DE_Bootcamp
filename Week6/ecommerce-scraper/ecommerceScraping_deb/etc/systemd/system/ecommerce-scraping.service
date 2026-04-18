@@ -1,0 +1,14 @@
+[Unit]
+Description=E-commerce Web Scraping API Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/ecommerceScraping
+ExecStart=/usr/bin/python3 /usr/local/bin/api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
