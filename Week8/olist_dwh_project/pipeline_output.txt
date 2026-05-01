@@ -1,0 +1,298 @@
+======================================================================
+PHASE 1: EXTRACT - SQLite → PostgreSQL (olist_oltp)
+======================================================================
+
+  Creating database 'olist_oltp'...
+  ✓ Database 'olist_oltp' created successfully
+
+  Found 11 tables in SQLite: customers, geolocation, leads_closed, leads_qualified, order_items, order_payments, order_reviews, orders, product_category_name_translation, products, sellers
+
+  Migrating tables...
+    ✓ customers                                    99,441 rows
+    ✓ geolocation                               1,000,163 rows
+    ✓ leads_closed                                    842 rows
+    ✓ leads_qualified                               8,000 rows
+    ✓ order_items                                 112,650 rows
+    ✓ order_payments                              103,886 rows
+    ✓ order_reviews                                99,224 rows
+    ✓ orders                                       99,441 rows
+    ✓ product_category_name_translation                71 rows
+    ✓ products                                     32,951 rows
+    ✓ sellers                                       3,095 rows
+
+  ──────────────────────────────────────────────────
+  TOTAL: 11 tables, 1,559,764 rows migrated
+  Database: olist_oltp is ready
+======================================================================
+
+======================================================================
+PHASE 2: TRANSFORM - Bronze Layer (Raw Copy)
+======================================================================
+
+  Creating database 'olist_olap'...
+  ✓ Database 'olist_olap' created successfully
+
+  Creating schemas...
+  ✓ Schema 'bronze' ready
+
+  Copying tables to bronze layer...
+    ✓ bronze.customers                                         99,441 rows
+    ✓ bronze.geolocation                                    1,000,163 rows
+    ✓ bronze.leads_closed                                         842 rows
+    ✓ bronze.leads_qualified                                    8,000 rows
+    ✓ bronze.order_items                                      112,650 rows
+    ✓ bronze.order_payments                                   103,886 rows
+    ✓ bronze.order_reviews                                     99,224 rows
+    ✓ bronze.orders                                            99,441 rows
+    ✓ bronze.product_category_name_translation                     71 rows
+    ✓ bronze.products                                          32,951 rows
+    ✓ bronze.sellers                                            3,095 rows
+
+  ──────────────────────────────────────────────────
+  TOTAL: 11 tables, 1,559,764 rows copied
+  Schema: olist_olap.bronze is ready
+======================================================================
+
+======================================================================
+PHASE 3: TRANSFORM - Silver Layer (Clean & Standardize)
+======================================================================
+
+  Creating schema...
+  ✓ Schema 'silver' ready
+
+  Cleaning tables...
+    → Cleaning geolocation...
+      Aggregated from 1,000,163 rows to 19,615 unique zip codes
+    ✓ silver.geolocation                                19,615 rows
+    → Cleaning customers...
+    ✓ silver.customers                                  99,441 rows
+    → Cleaning sellers...
+    ✓ silver.sellers                                     3,095 rows
+    → Cleaning products...
+    ✓ silver.products                                   32,951 rows
+    → Cleaning orders...
+    ✓ silver.orders                                     99,441 rows
+    → Cleaning order_items...
+    ✓ silver.order_items                               112,650 rows
+    → Cleaning order_payments...
+    ✓ silver.order_payments                            103,886 rows
+    → Cleaning order_reviews...
+    ✓ silver.order_reviews                             99,224 rows
+    → Building combined leads table...
+    ✓ silver.leads                                       8,000 rows
+
+  ──────────────────────────────────────────────────
+  TOTAL: 9 tables, 578,303 rows written
+  Schema: olist_olap.silver is ready
+======================================================================
+
+======================================================================
+PHASE 4: TRANSFORM - Gold Layer - Dimensions
+======================================================================
+
+  Building independent dimensions...
+    → Building Dim_Date...
+      Generated 1,096 rows (2016-01-01 to 2018-12-31)
+    → Building Dim_Time...
+      Generated 1,440 rows (00:00 to 23:59)
+    → Building Dim_Event_Type...
+      Defined 5 event types
+
+  Building static dimensions...
+    → Building Dim_Payment_Type...
+      Found 5 payment types
+    → Building Dim_Order_Status...
+      Found 8 order statuses
+    → Building Dim_Lead_Source...
+      Found 10 lead sources
+
+  Building entity dimensions...
+    → Building Dim_Location...
+      19,615 locations loaded with regions
+    → Building Dim_Customer...
+      99,441 customers loaded
+    → Building Dim_Seller...
+      3,095 sellers loaded
+    → Building Dim_Product...
+      32,951 products loaded
+    → Building Dim_Lead...
+      8,000 leads loaded
+
+  ──────────────────────────────────────────────────
+  TOTAL: 11 dimensions built successfully
+======================================================================
+
+======================================================================
+PHASE 5: TRANSFORM - Gold Layer - Facts
+======================================================================
+
+  Building fact tables...
+    → Building Fact_Sales...
+      112,650 rows built
+    → Building Fact_Payments...
+      103,886 rows built
+    → Building Fact_Reviews...
+      99,224 rows built
+    → Building Fact_Seller_Acquisition...
+      8,000 rows built
+    → Building Fact_Order_Events...
+      393,481 rows built from 99,441 orders
+
+  ──────────────────────────────────────────────────
+  TOTAL: 5 fact tables built successfully
+======================================================================
+
+======================================================================
+PHASE 6: LOAD - Write to olist_olap (Dimensions + Facts)
+======================================================================
+
+  Creating gold schemas...
+  ✓ Schema 'dimensions' ready
+  ✓ Schema 'facts' ready
+
+  Writing dimensions...
+    ✓ dimensions.dim_date                            1,096 rows
+    ✓ dimensions.dim_time                            1,440 rows
+    ✓ dimensions.dim_event_type                          5 rows
+    ✓ dimensions.dim_payment_type                        5 rows
+    ✓ dimensions.dim_order_status                        8 rows
+    ✓ dimensions.dim_lead_source                        10 rows
+    ✓ dimensions.dim_location                       19,615 rows
+    ✓ dimensions.dim_customer                       99,441 rows
+    ✓ dimensions.dim_seller                          3,095 rows
+    ✓ dimensions.dim_product                        32,951 rows
+    ✓ dimensions.dim_lead                            8,000 rows
+
+  Writing facts...
+    ✓ facts.fact_sales                             112,650 rows
+    ✓ facts.fact_payments                          103,886 rows
+    ✓ facts.fact_reviews                            99,224 rows
+    ✓ facts.fact_seller_acquisition                  8,000 rows
+    ✓ facts.fact_order_events                      393,481 rows
+
+  Creating indexes...
+    ✓ 20 indexes created
+
+  ──────────────────────────────────────────────────
+  TOTAL: 11 dimensions + 5 facts
+  Rows written: 882,907
+  Database: olist_olap is ready for analytics
+======================================================================
+
+======================================================================
+PHASE 7: VALIDATION - Data Quality Checks
+======================================================================
+
+  → Checking row counts...
+
+  → Checking NULL foreign keys...
+
+  → Checking referential integrity...
+
+  ────────────────────────────────────────────────────────────
+  VALIDATION REPORT
+  ────────────────────────────────────────────────────────────
+    ✓ Sales vs Order Items                               Fact: 112,650 | Silver: 112,650
+    ✓ Payments vs Order Payments                         Fact: 103,886 | Silver: 103,886
+    ✓ Reviews vs Order Reviews                           Fact: 99,224 | Silver: 99,224
+    ✓ Acquisition vs Leads                               Fact: 8,000 | Silver: 8,000
+    ✓ Order Events (delivered count check)               Total events: 393,481 | Delivered events: 96,476
+    ✓ facts.fact_sales.customer_key                      NULL count: 0
+    ✓ facts.fact_sales.seller_key                        NULL count: 0
+    ✓ facts.fact_sales.product_key                       NULL count: 0
+    ✓ facts.fact_sales.purchase_date_key                 NULL count: 0
+    ✓ facts.fact_sales.customer_location_key             NULL count: 302
+    ✓ facts.fact_sales.seller_location_key               NULL count: 253
+    ✓ facts.fact_payments.customer_key                   NULL count: 0
+    ✓ facts.fact_payments.payment_type_key               NULL count: 0
+    ✓ facts.fact_reviews.customer_key                    NULL count: 0
+    ✓ facts.fact_reviews.review_score                    NULL count: 0
+    ✓ facts.fact_seller_acquisition.lead_key             NULL count: 0
+    ✓ facts.fact_seller_acquisition.seller_key           NULL count: 7,620
+    ✓ facts.fact_order_events.event_date_key             NULL count: 0
+    ✓ facts.fact_order_events.event_type_key             NULL count: 0
+    ✓ facts.fact_sales.customer_key → dimensions.dim_customer Orphans: 0
+    ✓ facts.fact_sales.seller_key → dimensions.dim_seller Orphans: 0
+    ✓ facts.fact_sales.product_key → dimensions.dim_product Orphans: 0
+    ✓ facts.fact_sales.customer_location_key → dimensions.dim_location Orphans: 0
+    ✓ facts.fact_sales.seller_location_key → dimensions.dim_location Orphans: 0
+    ✓ facts.fact_payments.customer_key → dimensions.dim_customer Orphans: 0
+    ✓ facts.fact_payments.payment_type_key → dimensions.dim_payment_type Orphans: 0
+    ✓ facts.fact_reviews.customer_key → dimensions.dim_customer Orphans: 0
+    ✓ facts.fact_seller_acquisition.lead_key → dimensions.dim_lead Orphans: 0
+    ✓ facts.fact_order_events.event_type_key → dimensions.dim_event_type Orphans: 0
+
+  ────────────────────────────────────────────────────────────
+  TOTAL: 29 checks | 29 passed | 0 failed
+  STATUS: ✓ ALL CHECKS PASSED
+======================================================================
+
+======================================================================
+PHASE 8: RECONCILIATION - Source vs Target Validation
+======================================================================
+
+  Running 37 checks...
+
+    ✓ 01. [A - Row Counts] Total Orders Count
+    ✓ 02. [A - Row Counts] Total Order Items Count
+    ✓ 03. [A - Row Counts] Total Customers Count
+    ✓ 04. [A - Row Counts] Total Sellers Count
+    ✓ 05. [A - Row Counts] Total Products Count
+    ✓ 06. [A - Row Counts] Total Reviews Count
+    ✓ 07. [B - Financial Metrics] Total Revenue (All Items)
+    ✓ 08. [B - Financial Metrics] Total Freight/Shipping Value
+    ✓ 09. [B - Financial Metrics] Average Item Price
+    ✓ 10. [B - Financial Metrics] Total Payment Value
+    ✓ 11. [B - Financial Metrics] Payments Row Count
+    ✓ 12. [C - Order Status] Orders by Status Distribution
+    ✓ 13. [D - Payment Types] Payments by Type Distribution
+    ✓ 14. [E - Review Scores] Reviews by Score Distribution
+    ✓ 15. [F - Review Metrics] Average Review Score
+    ✓ 16. [F - Review Metrics] Positive Review Count (Score >= 4)
+    ✓ 17. [F - Review Metrics] Negative Review Count (Score <= 2)
+    ✓ 18. [G - Revenue by Category] Revenue by Category (All Categories)
+    ✓ 19. [H - Seller Acquisition] Total Qualified Leads
+    ✓ 20. [H - Seller Acquisition] Total Closed/Won Leads
+    ✓ 21. [H - Seller Acquisition] Leads by Source Distribution
+    ✓ 22. [H - Seller Acquisition] Leads by Business Segment
+    ✓ 23. [I - Order Events] Order Events: Purchased Count
+    ✓ 24. [I - Order Events] Order Events: Delivered Count
+    ✓ 25. [I - Order Events] Order Events: Canceled Count
+    ✓ 26. [J - Geographic] Unique Cities in Customer Dimension
+    ✓ 27. [J - Geographic] Unique States in Customer Dimension
+    ✓ 28. [K - Date Coverage] Earliest Purchase Date
+    ✓ 29. [K - Date Coverage] Latest Purchase Date
+    ✓ 30. [K - Date Coverage] Distinct Purchase Dates Count
+    ✓ 31. [L - Product Data] Products with English Category
+    ✓ 32. [L - Product Data] Average Product Weight
+    ✓ 33. [M - Payment Installments] Average Payment Installments
+    ✓ 34. [M - Payment Installments] Max Payment Installments
+    ✓ 35. [N - Delivery Metrics] Orders with Delivery Delay > 0 Days
+    ✓ 36. [N - Delivery Metrics] Orders Delivered On Time or Early
+    ✓ 37. [N - Delivery Metrics] Average Delivery Delay Days
+
+  ────────────────────────────────────────────────────────────
+  RECONCILIATION SUMMARY
+  ────────────────────────────────────────────────────────────
+  Total checks: 37
+  Passed:       37
+  Failed:       0
+  Status:       ✓ SOURCE AND TARGET ARE IDENTICAL
+======================================================================
+
+██████████████████████████████████████████████████████████████████████
+█                                                                    █
+█                PIPELINE COMPLETED SUCCESSFULLY                     █
+█                                                                    █
+█  Source:      olist.sqlite (1,559,764 rows)                       █
+█  Target:      olist_olap (882,907 rows in star schema)            █
+█  Dimensions:  11 tables (165,666 rows)                            █
+█  Facts:       5 tables (717,241 rows)                             █
+█  Indexes:     20 B-tree indexes created                           █
+█  Validation:  29/29 structural checks passed                      █
+█  Recon:       37/37 source-to-target matches                      █
+█                                                                    █
+██████████████████████████████████████████████████████████████████████
+
+Pipeline completed at: 2024-12-31 23:59:59
+Total execution time: ~2 minutes
