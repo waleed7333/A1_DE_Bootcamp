@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  hive:
+    image: itversity/itvdelab:latest
+    container_name: hive_project
+    ports:
+      - "10000:10000"
+      - "9083:9083"
+      - "50070:50070"
+      - "8088:8088"
+      - "8888:8888"
+    volumes:
+      - ./data:/data
+      - ./scripts:/scripts
+      - ./output:/output
+    environment:
+      - HIVE_HOME=/opt/hive
+      - HADOOP_HOME=/opt/hadoop
+    stdin_open: true
+    tty: true
+    command: /bin/bash

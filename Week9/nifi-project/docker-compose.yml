@@ -1,0 +1,77 @@
+services:
+  # Apache NiFi - Data pipeline orchestrator
+  nifi:
+    image: apache/nifi:latest
+    container_name: nifi
+    ports:
+      - "8443:8443"
+    environment:
+      - SINGLE_USER_CREDENTIALS_USERNAME=admin
+      - SINGLE_USER_CREDENTIALS_PASSWORD=adminadminadmin
+    volumes:
+      - nifi_conf:/opt/nifi/nifi-current/conf
+      - nifi_database:/opt/nifi/nifi-current/database_repository
+      - nifi_flowfile:/opt/nifi/nifi-current/flowfile_repository
+      - nifi_content:/opt/nifi/nifi-current/content_repository
+      - nifi_provenance:/opt/nifi/nifi-current/provenance_repository
+      - ./data:/data
+      - ./nifi-extensions/postgresql-42.7.3.jar:/opt/nifi/nifi-current/lib/postgresql-42.7.3.jar
+      - ./nifi-extensions/hadoop-conf:/opt/nifi/nifi-current/hadoop-conf
+      - ./hdfs-staging:/hdfs-staging
+    networks:
+      - nifi-net
+
+  # PostgreSQL - Simulated operational database
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=nifi_user
+      - POSTGRES_PASSWORD=strongpassword
+      - POSTGRES_DB=nifi_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nifi-net
+
+  # Python simulator - Runs data generation scripts
+  python-simulator:
+    build: .
+    image: python-simulator:custom
+    container_name: python-simulator
+    working_dir: /scripts
+    volumes:
+      - ./data:/data
+      - ./data/scripts:/scripts
+    networks:
+      - nifi-net
+    command: tail -f /dev/null
+
+  # Hadoop HDFS (using existing itversity image)
+  hadoop:
+    image: itversity/itvdelab:latest
+    container_name: hadoop
+    hostname: hadoop
+    ports:
+      - "9870:9870"   # HDFS Web UI
+      - "9000:9000"   # HDFS RPC
+    volumes:
+      - hadoop_data:/home/itversity
+      - ./hdfs-staging:/hdfs-staging
+    networks:
+      - nifi-net
+
+volumes:
+  nifi_conf:
+  nifi_database:
+  nifi_flowfile:
+  nifi_content:
+  nifi_provenance:
+  postgres_data:
+  hadoop_data:
+
+networks:
+  nifi-net:
+    name: nifi-net
