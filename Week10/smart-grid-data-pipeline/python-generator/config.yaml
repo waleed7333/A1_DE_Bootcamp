@@ -1,0 +1,51 @@
+# Smart Grid Data Generator Configuration
+# You can change any value here without touching the Python code
+
+output_folder: "./output"            # Where to save CSV files
+file_rotation_seconds: 30            # Create new file every N seconds
+readings_per_second: 20              # How many readings per second
+duration_minutes: 5                  # How long to run the generator
+
+# List of transformers (ID and Location)
+transformers:
+  - id: "TRF-0001"
+    location: "Riyadh-North"
+  - id: "TRF-0002"
+    location: "Riyadh-East"
+  - id: "TRF-0003"
+    location: "Jeddah-Main"
+  - id: "TRF-0004"
+    location: "Jeddah-Industrial"
+  - id: "TRF-0005"
+    location: "Dammam-Central"
+  - id: "TRF-0006"
+    location: "Dammam-Port"
+  - id: "TRF-0007"
+    location: "Mecca-Haram"
+  - id: "TRF-0008"
+    location: "Medina-Central"
+  - id: "TRF-0009"
+    location: "Abha-City"
+  - id: "TRF-0010"
+    location: "Tabuk-Center"
+
+# Normal ranges for electrical readings
+normal_ranges:
+  voltage_min: 220
+  voltage_max: 240
+  current_min: 100
+  current_max: 500
+  frequency_min: 59.8
+  frequency_max: 60.2
+  temperature_min: 30
+  temperature_max: 65
+
+# Error probabilities (0.01 = 1%, 0.05 = 5%)
+error_rates:
+  missing_value: 0.04       # 4% - Some fields will be empty
+  duplicate_row: 0.02       # 2% - Same row appears twice
+  corrupted_row: 0.01       # 1% - Unreadable garbage row
+  invalid_value: 0.04       # 4% - Negative or extreme values
+  frequency_drift: 0.02     # 2% - Wrong frequency
+  overload: 0.01            # 1% - Too much current
+  wrong_timestamp: 0.03     # 3% - Different date format

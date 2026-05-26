@@ -1,0 +1,16 @@
+services:
+  pyspark:
+    image: jupyter/pyspark-notebook:x86_64-spark-3.5.0
+    container_name: pyspark
+    ports:
+      - "8888:8888"          # JupyterLab web interface
+      - "4040-4045:4040-4045" # Spark UI ports for multiple jobs
+    volumes:
+      - ./notebooks:/home/jovyan/work  # Persist notebooks on host
+      - ./data:/home/jovyan/data      # Persist datasets on host
+    environment:
+      - JUPYTER_ENABLE_LAB=yes  # Use JupyterLab instead of classic notebook
+      - JUPYTER_TOKEN=          # Disable auth token
+      - GRANT_SUDO=yes         # Allow sudo inside container
+    command: start-notebook.sh --NotebookApp.token='' --NotebookApp.password=''  # Disable auth token for local dev
+
