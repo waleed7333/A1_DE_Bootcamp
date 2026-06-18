@@ -1,0 +1,127 @@
+[{
+  "_id": {
+    "$oid": "6a33b0db4f7b283f41738e12"
+  },
+  "name": "Ahmed",
+  "age": 20,
+  "major": "Math",
+  "grade": 85
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce0"
+  },
+  "name": "Ahmed",
+  "age": 20,
+  "major": "Math",
+  "grade": 85
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce1"
+  },
+  "name": "Sara",
+  "age": 22,
+  "major": "Physics",
+  "grade": 90
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce2"
+  },
+  "name": "Mohamed",
+  "age": 19,
+  "major": "Computer Science",
+  "grade": 88
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce3"
+  },
+  "name": "Ali",
+  "major": "Math",
+  "marks": 60,
+  "passingMarks": 70
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce4"
+  },
+  "name": "Layla",
+  "major": "Physics",
+  "marks": 80,
+  "passingMarks": 75
+},
+{
+  "_id": {
+    "$oid": "6a33b119323c230d06897ce5"
+  },
+  "name": "Omar",
+  "age": 21,
+  "major": "Engineering",
+  "courses": [
+    "Math 101",
+    "Physics 101",
+    "Chemistry 101",
+    "Computer Science 101",
+    "Computer Science 101"
+  ]
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb54077"
+  },
+  "name": "Ahmed",
+  "age": 20,
+  "major": "Math",
+  "grade": 85
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb54078"
+  },
+  "name": "Sara",
+  "age": 22,
+  "major": "Physics",
+  "grade": 90
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb54079"
+  },
+  "name": "Mohamed",
+  "age": 19,
+  "major": "Computer Science",
+  "grade": 88
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb5407a"
+  },
+  "name": "Ali",
+  "major": "Math",
+  "marks": 60,
+  "passingMarks": 70
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb5407b"
+  },
+  "name": "Layla",
+  "major": "Physics",
+  "marks": 80,
+  "passingMarks": 75
+},
+{
+  "_id": {
+    "$oid": "6a33b17446196ce20cb5407c"
+  },
+  "name": "Omar",
+  "age": 21,
+  "major": "Engineering",
+  "courses": [
+    "Math 101",
+    "Physics 101",
+    "Chemistry 101"
+  ]
+}]

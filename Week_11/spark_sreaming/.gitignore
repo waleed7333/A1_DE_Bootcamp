@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Spark
+*.log
+*.tmp
+*.pid
+*.out
+
+# Lab 1
+lab1/__pycache__/
+lab1/*.pyc
+
+lab1/data/*
+!lab1/data/.gitkeep
+lab1/csv/*
+!lab1/csv/.gitkeep
+
+
+lab1/streaming_input/*
+!lab1/streaming_input/.gitkeep
+
+
+# Lab 2
+lab2/__pycache__/
+lab2/*.pyc
+
+lab2/data/*
+!lab2/data/.gitkeep
+
+lab2/streaming_input/*
+!lab2/streaming_input/.gitkeep
+
+lab2/output/json/*
+!lab2/output/json/.gitkeep
+
+lab2/checkpoints/console/*
+!lab2/checkpoints/console/.gitkeep
+
+lab2/checkpoints/hive/*
+!lab2/checkpoints/hive/.gitkeep
+
+lab2/checkpoints/json/*
+!lab2/checkpoints/json/.gitkeep
+
+lab2/warehouse/temperature_avg_table/*
+!lab2/warehouse/temperature_avg_table/.gitkeep
+
+
+# Docker
+*.pid
+*.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

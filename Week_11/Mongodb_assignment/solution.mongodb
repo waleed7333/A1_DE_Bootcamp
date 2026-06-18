@@ -1,0 +1,137 @@
+// ============================================
+// MongoDB Assignment - School Database
+// ============================================
+
+// Select the database to use
+use('school');
+
+// ============================================
+// Task 1: Insert one document
+// ============================================
+db.students.insertOne({
+    name: "Ahmed",
+    age: 20,
+    major: "Math",
+    grade: 85
+});
+
+// ============================================
+// Task 2: Insert multiple documents
+// ============================================
+db.students.insertMany([
+    {
+        name: "Sara",
+        age: 22,
+        major: "Physics",
+        grade: 90
+    },
+    {
+        name: "Mohamed",
+        age: 19,
+        major: "Computer Science",
+        grade: 88
+    }
+]);
+
+// ============================================
+// Task 3: Query documents
+// ============================================
+// Find students who major in Math
+db.students.find({ major: "Math" });
+
+// Find students older than 20
+db.students.find({ age: { $gt: 20 } });
+
+// ============================================
+// Task 4: Update a document
+// ============================================
+// Update Noah's major to Computer Science
+db.students.updateOne(
+    { name: "Noah" },
+    { $set: { major: "Computer Science" } }
+);
+
+// ============================================
+// Task 5: Remove a field
+// ============================================
+// Remove age field from Emma's document
+db.students.updateOne(
+    { name: "Emma" },
+    { $unset: { age: "" } }
+);
+
+// ============================================
+// Task 6: Range query (between 20 and 22)
+// ============================================
+db.students.find({
+    age: { 
+        $gte: 20, 
+        $lte: 22 
+    }
+});
+
+// ============================================
+// Task 7: Aggregation Pipeline
+// ============================================
+// Count students per major
+db.students.aggregate([
+    {
+        $group: {
+            _id: "$major",
+            count: { $sum: 1 }
+        }
+    }
+]);
+
+// ============================================
+// Task 8: Field comparison with $expr
+// ============================================
+// Insert students with marks and passingMarks
+db.students.insertMany([
+    {
+        name: "Ali",
+        major: "Math",
+        marks: 60,
+        passingMarks: 70
+    },
+    {
+        name: "Layla",
+        major: "Physics",
+        marks: 80,
+        passingMarks: 75
+    }
+]);
+
+// Find students whose marks are less than passingMarks
+db.students.find({
+    $expr: {
+        $lt: ["$marks", "$passingMarks"]
+    }
+});
+
+// ============================================
+// Task 9: Array queries and updates
+// ============================================
+// Insert a student with an array of courses
+db.students.insertOne({
+    name: "Omar",
+    age: 21,
+    major: "Engineering",
+    courses: ["Math 101", "Physics 101", "Chemistry 101"]
+});
+
+// Add a new course to the array
+db.students.updateOne(
+    { name: "Omar" },
+    { $push: { courses: "Computer Science 101" } }
+);
+
+// Find students enrolled in a specific course
+db.students.find({
+    courses: "Math 101"
+});
+
+// ============================================
+// View all data to verify
+// ============================================
+db.students.find().pretty();
