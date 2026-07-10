@@ -1,0 +1,26 @@
+# Filebeat reads one generated .log source. Each line is NDJSON so malformed lines
+# are preserved as Kafka messages and Spark decides whether they are quarantined.
+filebeat.inputs:
+  - type: filestream
+    id: ecommerce-web-logs
+    enabled: true
+    paths:
+      - /opt/project/data/source/web_logs/webserver_access.log
+    parsers:
+      - ndjson:
+          target: ""
+          add_error_key: true
+          overwrite_keys: true
+    prospector.scanner.check_interval: 2s
+    close.reader.on_eof: true
+
+output.kafka:
+  hosts:
+    - kafka1:19092
+    - kafka2:19092
+    - kafka3:19092
+  topic: webserver-logs
+  required_acks: -1
+  compression: gzip
+
+logging.level: info

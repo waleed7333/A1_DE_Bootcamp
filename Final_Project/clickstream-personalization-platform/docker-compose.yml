@@ -1,0 +1,455 @@
+
+
+name: clickstream-personalization
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: clickstream-postgres
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 450MB
+    networks: [platform_net]
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.2
+    container_name: clickstream-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx192m"
+    # Persist ZooKeeper metadata. Kafka 7.3.2 runs in ZooKeeper mode, so its
+    # cluster metadata must survive a normal `docker compose down`.
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    # ZooKeeper is validated indirectly by the real three-broker Kafka metadata check.
+    # Do not block the cluster on an image-specific ZooKeeper health utility.
+    deploy:
+      resources:
+        limits:
+          memory: 320MB
+    networks: [platform_net]
+
+  kafka1:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: clickstream-kafka1
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "${KAFKA1_HOST_PORT}:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:19092,HOST://localhost:${KAFKA1_HOST_PORT}
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,HOST://0.0.0.0:29092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+    volumes:
+      - kafka1_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+    deploy:
+      resources:
+        limits:
+          memory: 384MB
+    networks: [platform_net]
+
+  kafka2:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: clickstream-kafka2
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "${KAFKA2_HOST_PORT}:29093"
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:19092,HOST://localhost:${KAFKA2_HOST_PORT}
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,HOST://0.0.0.0:29093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+    volumes:
+      - kafka2_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+    deploy:
+      resources:
+        limits:
+          memory: 384MB
+    networks: [platform_net]
+
+  kafka3:
+    image: confluentinc/cp-kafka:7.3.2
+    container_name: clickstream-kafka3
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "${KAFKA3_HOST_PORT}:29094"
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:19092,HOST://localhost:${KAFKA3_HOST_PORT}
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,HOST://0.0.0.0:29094
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
+    volumes:
+      - kafka3_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:19092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+    deploy:
+      resources:
+        limits:
+          memory: 384MB
+    networks: [platform_net]
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: clickstream-kafka-ui
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_UI_PORT}:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: clickstream-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka1:19092,kafka2:19092,kafka3:19092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 240MB
+    networks: [platform_net]
+
+  debezium-connect:
+    image: debezium/connect:3.0.0.Final
+    container_name: clickstream-debezium-connect
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${DEBEZIUM_PORT}:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka1:19092,kafka2:19092,kafka3:19092
+      GROUP_ID: clickstream-debezium-connect
+      CONFIG_STORAGE_TOPIC: debezium-connect-configs
+      OFFSET_STORAGE_TOPIC: debezium-connect-offsets
+      STATUS_STORAGE_TOPIC: debezium-connect-status
+      # Debezium image variables configure the worker. CONNECT_* forms are also
+      # explicit so Kafka Connect creates and validates its internal topics with RF=3.
+      CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_PARTITIONS: 3
+      CONNECT_STATUS_STORAGE_PARTITIONS: 3
+      # Initialization pre-creates every business topic with RF=3 and partitions=3.
+      # Disable worker-level automatic creation so Connect never creates an undeclared topic.
+      CONNECT_TOPIC_CREATION_ENABLE: "false"
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      OFFSET_FLUSH_INTERVAL_MS: 10000
+      HEAP_OPTS: "-Xms128m -Xmx320m"
+    deploy:
+      resources:
+        limits:
+          memory: 450MB
+    networks: [platform_net]
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: clickstream-minio
+    # Keep the object store, including Iceberg Parquet and metadata objects, visible
+    # under data/minio/data on the host. The Streaming migration exports/reimports
+    # objects safely before this bind mount becomes active.
+    user: "0:0"
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    volumes:
+      - ./data/minio/data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 256MB
+    networks: [platform_net]
+
+  filebeat:
+    image: elastic/filebeat:8.19.17
+    container_name: clickstream-filebeat
+    user: root
+    depends_on:
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    command: ["filebeat", "-e", "--strict.perms=false"]
+    volumes:
+      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./data/source/web_logs:/opt/project/data/source/web_logs:ro
+      - filebeat_registry:/usr/share/filebeat/data
+    deploy:
+      resources:
+        limits:
+          memory: 128MB
+    networks: [platform_net]
+
+  spark-engine:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.spark
+    image: clickstream-spark-engine:3.5.0
+    container_name: clickstream-spark-engine
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      kafka1:
+        condition: service_healthy
+      kafka2:
+        condition: service_healthy
+      kafka3:
+        condition: service_healthy
+    environment:
+      SPARK_CONF_DIR: /usr/local/spark/conf
+      PYSPARK_PYTHON: python
+      SPARK_LOCAL_IP: 0.0.0.0
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+      AWS_REGION: us-east-1
+    volumes:
+      - ./config/spark-defaults.conf:/usr/local/spark/conf/spark-defaults.conf:ro
+      - ./spark_jobs:/opt/project/spark_jobs:ro
+      - ./src:/opt/project/src
+      - ./data:/opt/project/data
+      - ./runtime:/opt/project/runtime
+      - ./reports:/opt/project/reports
+    # One long-lived runner lives inside the only Spark container. It claims only
+    # allow-listed Airflow requests and launches spark-submit locally when needed.
+    command: ["bash", "-lc", "exec python /opt/project/src/platform_core/spark_job_runner.py"]
+    # The image's inherited Jupyter check is irrelevant because this project does not run a notebook server.
+    # This check proves Spark and the pinned Iceberg runtime are available before any later job starts.
+    healthcheck:
+      test: ["CMD-SHELL", "test -x /usr/local/spark/bin/spark-submit && test -f /usr/local/spark/jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 2.5GB
+    networks: [platform_net]
+
+  airflow:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.airflow
+    image: clickstream-airflow:3.2.2
+    container_name: clickstream-airflow
+    depends_on:
+      spark-engine:
+        condition: service_started
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+      # Low-memory execution profile: exactly one Airflow task at a time.
+      AIRFLOW__CORE__PARALLELISM: "1"
+      AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
+      AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "1"
+      AIRFLOW__SCHEDULER__MAX_TIS_PER_QUERY: "1"
+      # Prevent scheduled runs from overlapping the manually triggered Batch Processing run.
+      AIRFLOW__SCHEDULER__USE_JOB_SCHEDULE: "true"
+      AIRFLOW__DAG_PROCESSOR__PARSING_PROCESSES: "1"
+    ports:
+      - "${AIRFLOW_PORT}:8080"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags:ro
+      # Airflow writes only small request/result metadata; Spark does all compute.
+      - ./runtime:/opt/project/runtime
+      - airflow_data:/opt/airflow
+    # The official "airflow standalone" command runs the local all-in-one environment.
+    command: ["bash", "-lc", "exec airflow standalone"]
+    deploy:
+      resources:
+        limits:
+          memory: 700MB
+    networks: [platform_net]
+
+  clickhouse:
+    # Pin a tested server release; do not let `latest` change the runtime unexpectedly.
+    image: clickhouse/clickhouse-server:24.8.14.39
+    container_name: clickstream-clickhouse
+    env_file: .env
+    # The official entrypoint starts as root only long enough to prepare the host bind mounts,
+    # then drops privileges to the ClickHouse user.
+    user: "0:0"
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT}:9000"
+    volumes:
+      # Project-local persistent data and logs. Both remain after container restarts.
+      - ./data/clickhouse/data:/var/lib/clickhouse
+      - ./data/clickhouse/log:/var/log/clickhouse-server
+      - ./clickhouse/users.d/operations-limits.xml:/etc/clickhouse-server/users.d/operations-limits.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    deploy:
+      resources:
+        limits:
+          memory: 1GB
+    networks: [platform_net]
+
+  observability-ui:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.observability
+    image: clickstream-observability-ui:1.0.0
+    container_name: clickstream-observability-ui
+    env_file: .env
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+      OBSERVABILITY_RUNTIME_ROOT: /opt/project/runtime
+      OBSERVABILITY_REPORTS_ROOT: /opt/project/reports
+    ports:
+      - "${OBSERVABILITY_PORT:-8501}:8501"
+    volumes:
+      - ./data:/opt/project/data:ro
+      - ./runtime:/opt/project/runtime:ro
+      - ./reports:/opt/project/reports:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 8
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 320MB
+    networks: [platform_net]
+
+networks:
+  platform_net:
+    name: clickstream-platform-net
+
+volumes:
+  postgres_data:
+  kafka1_data:
+  kafka2_data:
+  kafka3_data:
+  zookeeper_data:
+  zookeeper_log:
+  filebeat_registry:
+  airflow_data:

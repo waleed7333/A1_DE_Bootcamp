@@ -1,0 +1,10 @@
+<!-- Query limits are intentionally below the 1 GiB container limit. External aggregation/sort thresholds reduce OOM risk during Power BI or ad-hoc exploration. -->
+<clickhouse>
+  <profiles>
+    <default>
+      <max_memory_usage>800000000</max_memory_usage>
+      <max_bytes_before_external_group_by>180000000</max_bytes_before_external_group_by>
+      <max_bytes_before_external_sort>180000000</max_bytes_before_external_sort>
+    </default>
+  </profiles>
+</clickhouse>

@@ -1,0 +1,37 @@
+# Local secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Dynamic runtime outputs
+runtime/*
+!runtime/.gitkeep
+
+reports/*
+!reports/.gitkeep
+
+data/source/*
+!data/source/.gitkeep
+!data/source/clickstream/
+!data/source/clickstream/.gitkeep
+!data/source/web_logs/
+!data/source/web_logs/.gitkeep
+!data/source/postgres/
+!data/source/postgres/.gitkeep
+
+data/minio/data/*
+!data/minio/data/.gitkeep
+
+data/clickhouse/*
+!data/clickhouse/.gitkeep
+
+# Licensed or local reference data
+data/reference/GeoLite2-City.mmdb
+*.mmdb
+
+# Local generated data
+data/quarantine/

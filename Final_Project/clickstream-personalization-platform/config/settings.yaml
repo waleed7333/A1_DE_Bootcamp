@@ -1,0 +1,156 @@
+# Non-secret configuration for the Clickstream Personalization Platform.
+# Secrets remain in .env and are never committed to Git.
+project:
+  name: "Clickstream Analysis for Website Personalization"
+  timezone: "UTC"
+  data_contract_version: "1.0"
+
+runtime:
+  host:
+    kafka_bootstrap_servers: "localhost:29092,localhost:29093,localhost:29094"
+    postgres_host: "localhost"
+    postgres_port: 5433
+    debezium_url: "http://localhost:8083"
+    minio_endpoint: "http://localhost:9000"
+    clickhouse_http_url: "http://localhost:8123"
+  docker:
+    kafka_bootstrap_servers: "kafka1:19092,kafka2:19092,kafka3:19092"
+    postgres_host: "postgres"
+    postgres_port: 5432
+    debezium_url: "http://debezium-connect:8083"
+    minio_endpoint: "http://minio:9000"
+    clickhouse_http_url: "http://clickhouse:8123"
+
+kafka:
+  partitions: 3
+  replication_factor: 3
+  min_insync_replicas: 2
+  topics:
+    clickstream: "clickstream-events"
+    web_logs: "webserver-logs"
+    users_cdc: "users-cdc"
+    orders_cdc: "orders-cdc"
+    order_items_cdc: "order-items-cdc"
+
+paths:
+  reference: "data/reference"
+  source: "data/source"
+  runtime: "runtime"
+  reports: "reports"
+  clickhouse_data: "data/clickhouse"
+  minio_data: "data/minio/data"
+  geoip_database: "data/reference/GeoLite2-City.mmdb"
+  product_catalog: "data/reference/product_catalog.csv"
+
+source_contract:
+  product_catalog:
+    mode: "static_csv_initial_load_only"
+    primary_key: "product_id"
+  users:
+    mode: "csv_seed_then_postgresql_cdc"
+    seed_file: "data/source/postgres/users_seed.csv"
+    primary_key: "user_id"
+  orders:
+    mode: "csv_seed_then_postgresql_cdc"
+    seed_file: "data/source/postgres/orders_seed.csv"
+    primary_key: "order_id"
+  order_items:
+    mode: "csv_seed_then_postgresql_cdc"
+    seed_file: "data/source/postgres/order_items_seed.csv"
+    primary_key: "order_item_id"
+  clickstream:
+    mode: "local_jsonl_then_kafka_streaming"
+    source_file: "data/source/clickstream/clickstream_events.jsonl"
+    primary_key: "event_id"
+  web_logs:
+    mode: "local_log_then_filebeat_streaming"
+    source_file: "data/source/web_logs/webserver_access.log"
+    primary_key: "log_id"
+  geoip:
+    mode: "local_mmdb_reference"
+  weather:
+    mode: "scheduled_open_meteo_batch"
+  holidays:
+    mode: "scheduled_calendarific_batch"
+
+iceberg:
+  catalog_name: "ecommerce"
+  catalog_type: "jdbc"
+  catalog_uri: "jdbc:postgresql://postgres:5432/ecommerce"
+  warehouse: "s3://ecommerce-lakehouse/warehouse"
+  namespace_raw: "raw"
+  namespace_processed: "processed"
+  namespace_audit: "audit"
+  required_raw_tables:
+    - kafka_messages
+  required_processed_tables:
+    - product_catalog_clean
+    - clickstream_clean
+    - webserver_logs_clean
+    - users_cdc_clean
+    - orders_cdc_clean
+    - order_items_cdc_clean
+    - user_profile_scd2
+    - weather_clean
+    - holidays_clean
+  required_audit_tables:
+    - pipeline_runs
+    - quality_metrics
+    - quarantine_records
+    - external_api_failures
+    - watermarks
+    - validation_runs
+    - serving_builds
+
+container_memory:
+  # Existing low-memory limits are intentionally preserved.
+  postgres: "450MB"
+  zookeeper: "320MB"
+  kafka1: "384MB"
+  kafka2: "384MB"
+  kafka3: "384MB"
+  kafka_ui: "240MB"
+  debezium_connect: "450MB"
+  minio: "256MB"
+  filebeat: "128MB"
+  spark_engine: "2.5GB"
+  airflow: "700MB"
+  clickhouse: "1GB"
+  observability_ui: "320MB"
+  recommended_docker_memory: "10GB"
+
+source_generation:
+  deterministic_seed: 20260701
+  base_timestamp: "2026-06-24T08:00:00Z"
+  product_catalog_count: 72
+  user_count: 96
+  order_count: 48
+  abandoned_session_count: 24
+  browsing_session_count: 24
+  invalid_clickstream_count: 5
+  duplicate_clickstream_count: 2
+  invalid_web_log_count: 4
+  duplicate_web_log_count: 2
+  late_event_count: 2
+
+streaming:
+  checkpoint_root: "runtime/checkpoints/streaming_ingestion"
+  status_file: "runtime/streaming_status.json"
+  source_publisher_state: "runtime/source_publishers"
+  processing_interval_seconds: 5
+  live_generation_interval_seconds: 20
+  allowed_lateness_minutes: 30
+  fail_on_data_loss: true
+
+batch_processing:
+  orchestration: "airflow_request_bridge_to_single_spark_engine"
+  dag_id: "analytics_refresh"
+  schedule: "0 * * * *"
+  retries: 1
+  retry_delay_minutes: 3
+  jobs:
+    - user_scd2
+    - weather_enrichment
+    - holiday_enrichment
+    - validate_lakehouse
+    - publish_serving

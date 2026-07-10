@@ -1,0 +1,3 @@
+# One all-in-one Airflow development container is enough for this project.
+# It will orchestrate jobs later but never runs Spark itself.
+FROM apache/airflow:3.2.2

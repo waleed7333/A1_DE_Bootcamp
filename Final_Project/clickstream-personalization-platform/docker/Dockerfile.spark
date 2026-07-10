@@ -1,0 +1,47 @@
+# One Spark container runs every Spark Streaming and Spark Batch job.
+# No Spark master, worker, or notebook container is created.
+FROM jupyter/pyspark-notebook:x86_64-spark-3.5.0
+
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python libraries required by later Spark jobs. They are installed once during image build.
+RUN pip install --no-cache-dir \
+      maxminddb==2.6.2 \
+      PyYAML==6.0.2 \
+      requests==2.32.3 \
+      psycopg2-binary==2.9.10 \
+      clickhouse-connect==0.8.18
+
+# Download Spark runtime JARs once while building the image so runtime jobs do not
+# depend on Maven downloads. Every download uses --fail, so a partial image cannot pass.
+RUN mkdir -p /usr/local/spark/jars \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar \
+      https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.6.1/iceberg-spark-runtime-3.5_2.12-1.6.1.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/iceberg-aws-bundle-1.6.1.jar \
+      https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-aws-bundle/1.6.1/iceberg-aws-bundle-1.6.1.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/postgresql-42.7.5.jar \
+      https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.5/postgresql-42.7.5.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/spark-sql-kafka-0-10_2.12-3.5.0.jar \
+      https://repo1.maven.org/maven2/org/apache/spark/spark-sql-kafka-0-10_2.12/3.5.0/spark-sql-kafka-0-10_2.12-3.5.0.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/spark-token-provider-kafka-0-10_2.12-3.5.0.jar \
+      https://repo1.maven.org/maven2/org/apache/spark/spark-token-provider-kafka-0-10_2.12/3.5.0/spark-token-provider-kafka-0-10_2.12-3.5.0.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/kafka-clients-3.5.0.jar \
+      https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.5.0/kafka-clients-3.5.0.jar \
+    && curl --fail --location --retry 3 \
+      --output /usr/local/spark/jars/commons-pool2-2.11.1.jar \
+      https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.11.1/commons-pool2-2.11.1.jar
+
+USER ${NB_UID}
+
+# The container remains alive. main.py starts named Spark jobs inside this same container later.
+CMD ["bash", "-lc", "sleep infinity"]
