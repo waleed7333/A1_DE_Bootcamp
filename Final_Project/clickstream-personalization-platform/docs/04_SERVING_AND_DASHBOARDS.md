@@ -1,312 +1,290 @@
-
 # Serving Layer and Dashboards
 
 ## 1. Purpose
 
-This document describes the ClickHouse serving layer, Power BI model, dashboard pages, and refresh behavior.
+This document explains the ClickHouse serving layer, the relationship between physical tables and `v_*` views, the Power BI model, dashboard scenarios, and the business interpretation of the final analytical outputs.
 
-Pipeline and lakehouse processing are documented in:
-
-```text
-docs/03_PIPELINES_QUALITY_AND_LAKEHOUSE.md
-```
-
-Operational validation is documented in:
-
-```text
-docs/05_OPERATIONS_VALIDATION_AND_LIMITATIONS.md
-```
+The serving layer exists so that Power BI reads optimized analytical structures instead of raw Kafka, PostgreSQL, or Iceberg processing tables.
 
 ---
 
-## 2. Serving Architecture
+## 2. Serving Layer Objective
 
-The serving flow is:
+The serving layer transforms validated lakehouse data into dashboard-ready structures:
 
-```text
-Validated Iceberg Tables
-    → Spark Batch publish_serving
-    → ClickHouse personalization_olap
-    → ClickHouse v_* Views
-    → Power BI Import Mode
-```
+- Dimensions.
+- Facts.
+- Marts.
+- Latest-active views.
 
-Power BI does not read directly from Iceberg or MinIO.
+This provides fast queries, simpler dashboard modeling, and a clean boundary between data engineering pipelines and business intelligence reporting.
 
 ---
 
-## 3. ClickHouse Database
+## 3. Why ClickHouse Was Used
 
-Database:
+ClickHouse is used because it is well suited for analytical queries over event, fact, and mart tables. It supports fast aggregations, efficient columnar storage, and simple SQL access for dashboard tools.
+
+In this project, ClickHouse provides:
+
+- A dedicated OLAP serving database.
+- Physical tables for dimensions, facts, and marts.
+- A serving control mechanism for active builds.
+- Regular `v_*` views for Power BI.
+- Separation between lakehouse processing and dashboard consumption.
+
+ClickHouse is not used as the raw data lake and is not the source-of-truth for CDC history. Iceberg remains the governed lakehouse store.
+
+---
+
+## 4. ClickHouse Database
+
+Database name:
 
 ```text
 personalization_olap
 ```
 
-ClickHouse contains dashboard-ready structures grouped into:
+Power BI connects to this database and selects views prefixed with `v_`.
 
-* Dimensions.
-* Facts.
-* Analytical marts.
-* Power BI-facing views.
+---
 
-Recommended diagram:
+## 5. Physical Tables vs `v_*` Views
+
+The serving job writes physical ClickHouse tables with a `serving_build_id`. Each serving publication creates a new build and writes rows for that build.
+
+The `v_*` views expose only the latest active serving build. This design allows multiple builds to exist in physical tables while Power BI always reads the active version.
+
+Important rule:
 
 ```text
-diagrams/05_olap_model.png
+v_* means latest ACTIVE serving build.
 ```
 
----
-
-## 4. Power BI Consumption Rule
-
-Power BI reads only ClickHouse views using the `v_*` naming convention.
-
-This keeps Power BI isolated from raw processing details and allows ClickHouse to act as the governed serving boundary.
+It does not mean that the table is automatically the current user table. For example, `v_dim_user_current` is current-user data because its underlying dimension is built from current SCD2 rows, while the `v_` prefix itself means latest active serving build.
 
 ---
 
-## 5. Main Dimensions
+## 6. Serving Control
 
-| View                 | Purpose                                   |
-| -------------------- | ----------------------------------------- |
-| `v_dim_date`         | Date attributes for dashboard filtering   |
-| `v_dim_product`      | Product attributes and category context   |
-| `v_dim_user_current` | Current user profile attributes from SCD2 |
+The serving publication process records active builds in a serving control table. The views filter physical tables by the latest active build.
 
----
-
-## 6. Main Facts
-
-| View                       | Purpose                       |
-| -------------------------- | ----------------------------- |
-| `v_fact_clickstream_event` | Event-level user behavior     |
-| `v_fact_order`             | Order-level transaction facts |
-| `v_fact_order_item`        | Order item transaction facts  |
-
----
-
-## 7. Analytical Marts
-
-| View                                | Purpose                                            |
-| ----------------------------------- | -------------------------------------------------- |
-| `v_mart_journey_session`            | Session-level journey and engagement analysis      |
-| `v_mart_navigation_paths`           | Page transition and navigation path analysis       |
-| `v_mart_product_performance_daily`  | Daily product behavior and conversion analysis     |
-| `v_mart_web_experience_daily`       | Technical experience metrics by day                |
-| `v_mart_context_impact_daily`       | Weather and holiday contextual analysis            |
-| `v_mart_personalization_candidates` | Product and segment candidates for personalization |
-
----
-
-## 8. Key Serving Relationships
-
-| Relationship                                      | Purpose                               |
-| ------------------------------------------------- | ------------------------------------- |
-| Date dimension to facts and marts                 | Time filtering and trend analysis     |
-| Product dimension to clickstream and order items  | Product behavior and revenue analysis |
-| Current user dimension to clickstream and orders  | Segment and membership analysis       |
-| Orders to order items                             | Transaction detail analysis           |
-| Clickstream to orders through checkout/order keys | Funnel and conversion analysis        |
-| Context marts to weather and holiday tables       | Contextual business analysis          |
-
----
-
-## 9. Dashboard Page 1
-
-### Name
+Conceptual logic:
 
 ```text
-Growth, Funnel Leakage & Journey Intelligence
+physical_table rows
+  ↓ filter by active serving_build_id
+v_* view
+  ↓
+Power BI
 ```
 
-### Purpose
-
-This page focuses on revenue, conversion, funnel leakage, navigation, and high-intent user behavior.
-
-### Main analysis areas
-
-* Total revenue.
-* Paid orders.
-* Conversion rate.
-* Sessions and engagement.
-* Cart abandonment.
-* Revenue at risk.
-* Funnel stages.
-* Drop-off points.
-* Top navigation paths.
-* High-intent cities and segments.
-
-### Typical business questions
-
-* Where do users abandon the journey?
-* Which funnel stages lose the most potential revenue?
-* Which cities or segments show high intent?
-* Which paths are common before conversion or abandonment?
+This prevents Power BI from reading stale or mixed-build data.
 
 ---
 
-## 10. Dashboard Page 2
+## 7. Dimensions
 
-### Name
+| View | Purpose |
+|---|---|
+| `v_dim_date` | Date dimension used for time filtering and date-based reporting. |
+| `v_dim_product` | Product dimension from the static product catalog. |
+| `v_dim_user_current` | Current user dimension for the latest active serving build. |
+
+`v_dim_user_current` does not replace the full SCD2 history. The full historical user profile table remains in Iceberg as `ecommerce.processed.user_profile_scd2`.
+
+---
+
+## 8. Facts
+
+| View | Purpose |
+|---|---|
+| `v_fact_clickstream_event` | Event-level behavioral fact table. |
+| `v_fact_order` | Order header fact table. |
+| `v_fact_order_item` | Order item fact table. |
+
+Facts support event counts, revenue metrics, product analysis, journey analysis, and relationship joins between behavior and transactions.
+
+---
+
+## 9. Marts
+
+| View | Purpose |
+|---|---|
+| `v_mart_journey_session` | Session-level journey and funnel outcomes. |
+| `v_mart_navigation_paths` | Navigation transitions and user path analysis. |
+| `v_mart_product_performance_daily` | Daily product engagement and conversion metrics. |
+| `v_mart_web_experience_daily` | Endpoint performance and web experience metrics. |
+| `v_mart_context_impact_daily` | Country, city, weather, and holiday context metrics. |
+| `v_mart_personalization_candidates` | Product and segment candidates for personalization. |
+
+Marts reduce dashboard complexity by pre-aggregating analytical patterns that would be expensive or difficult to build directly in Power BI.
+
+---
+
+## 10. Power BI Connection Rule
+
+Power BI must select only ClickHouse views with the `v_` prefix.
+
+Approved views:
 
 ```text
-Personalization, Context & Recommendation Intelligence
+v_dim_date
+v_dim_product
+v_dim_user_current
+v_fact_clickstream_event
+v_fact_order
+v_fact_order_item
+v_mart_journey_session
+v_mart_navigation_paths
+v_mart_product_performance_daily
+v_mart_web_experience_daily
+v_mart_context_impact_daily
+v_mart_personalization_candidates
 ```
 
-### Purpose
-
-This page focuses on personalization candidates, product interest, segment behavior, and contextual enrichment.
-
-### Main analysis areas
-
-* Candidate products for personalization.
-* High-view low-conversion products.
-* Membership segment behavior.
-* Weather-associated behavior.
-* Holiday-associated behavior.
-* Product recommendation opportunities.
-* Contextual revenue patterns.
-
-### Typical business questions
-
-* Which products receive attention but do not convert?
-* Which segments should receive personalized recommendations?
-* Are weather or holiday contexts associated with behavior changes?
-* Which products are strong candidates for recommendation logic?
+Power BI should not import physical non-view serving tables, raw Iceberg data, audit tables, Kafka topics, or PostgreSQL source tables.
 
 ---
 
-## 11. Operations Console Boundary
+## 11. Power BI Import Mode
 
-The Operations Console is not a Power BI dashboard page.
+The report uses Import mode. This is appropriate for the project because:
 
-It is a separate Streamlit monitoring interface for:
+- The dataset is project-sized.
+- ClickHouse already publishes serving-ready tables.
+- Import mode makes dashboard interaction fast.
+- The report can be refreshed after a serving build is published.
 
-* Platform health.
-* Streaming status.
-* CDC status.
-* SCD2 health.
-* Data quality.
-* Lakehouse validation.
-* ClickHouse serving state.
-* Alerts and recommendations.
+The tradeoff is that Power BI must be refreshed to reflect a newly published ClickHouse serving build.
 
 ---
 
-## 12. Serving Refresh Behavior
+## 12. Dashboard Scenario 1: Growth and Funnel Intelligence
 
-ClickHouse does not update automatically after every Iceberg write.
+The first dashboard page focuses on growth, revenue, journey, and funnel leakage.
 
-The serving layer is updated by:
+### 12.1 Business question
 
-```text
-publish_serving
-```
+How do users move from browsing to product interest, cart action, checkout start, and purchase completion, and where does the journey lose users?
 
-Expected sequence:
+### 12.2 Key analysis areas
 
-```text
-Streaming writes Iceberg
-    → Batch enrichment and validation
-    → publish_serving
-    → ClickHouse updated
-    → Power BI refresh
-```
+- Total sessions.
+- Clickstream event volume.
+- Checkout starts.
+- Checkout completions.
+- Cart-to-checkout rate.
+- Checkout-to-purchase rate.
+- Revenue and order metrics.
+- Product and category performance.
+- Session outcomes.
+- Navigation path behavior.
 
----
+### 12.3 Why this page matters
 
-## 13. Freshness Tracking
-
-The serving layer should be evaluated using:
-
-```text
-Latest Iceberg event time
-Latest ClickHouse event time
-Freshness gap in minutes
-Latest serving build ID
-Latest Power BI refresh time
-```
-
-This distinction is important because streaming data may exist in Iceberg before it is published to ClickHouse.
+This page connects behavioral events to transactional outcomes. It supports decisions about funnel optimization, product-page improvements, checkout experience, and revenue leakage.
 
 ---
 
-## 14. Serving Build Evidence
+## 13. Dashboard Scenario 2: Personalization and Context Intelligence
 
-The latest serving report is written to:
+The second dashboard page focuses on personalization candidates and context-aware segmentation.
+
+### 13.1 Business question
+
+Which products, users, segments, countries, devices, traffic sources, weather contexts, or holiday contexts show behavior patterns that can support personalization?
+
+### 13.2 Key analysis areas
+
+- Products with high interest and lower conversion.
+- Product candidate ranking.
+- User and traffic segments.
+- Country and city behavior.
+- Device/browser differences.
+- Weather and holiday context.
+- Web experience by endpoint or response condition.
+
+### 13.3 Why this page matters
+
+Personalization requires more than purchase records. It needs product interest, journey behavior, context, and friction indicators. This page turns the lakehouse and serving model into business-facing personalization intelligence.
+
+---
+
+## 14. Funnel Measures
+
+The dashboard funnel should be interpreted carefully. A correct funnel measure must use the correct denominator.
+
+| Measure | Meaning |
+|---|---|
+| Add to Cart | Count of `add_to_cart` events. |
+| Checkout Starts | Count of `checkout_start` events or sessions that reached checkout start, depending on visual context. |
+| Checkout Completes | Count of `checkout_complete` events or completed checkout sessions. |
+| Cart to Checkout Rate | Checkout starts divided by add-to-cart events/sessions in the same grain. |
+| Checkout to Purchase Rate | Checkout completes divided by checkout starts in the same grain. |
+
+Rates should not be forced to 100% by using mismatched numerator and denominator filters. If a visual shows 100% everywhere, the filter context and denominator definition should be checked.
+
+---
+
+## 15. Relationship Model
+
+The analytical model depends on these relationships:
+
+| Relationship | Key |
+|---|---|
+| Date dimension to facts/marts | Date key or date field. |
+| Product dimension to clickstream facts | `product_id`. |
+| Product dimension to order item facts | `product_id`. |
+| User dimension to clickstream facts | `user_id`. |
+| User dimension to order facts | `user_id`. |
+| Order fact to order item fact | `order_id`. |
+| Clickstream checkout events to orders | `checkout_id`, `order_id`. |
+
+These relationships allow the report to combine behavior, revenue, products, users, and context.
+
+---
+
+## 16. Serving Evidence
+
+Serving publication writes evidence to:
 
 ```text
 reports/serving_latest.json
+ecommerce.audit.serving_builds
 ```
 
-It should include evidence such as:
+The evidence records:
 
-* Serving build ID.
-* Build timestamp.
-* Status.
-* Published tables or views.
-* Row counts.
-* Validation dependency.
-* Errors if publish failed.
+- Serving build ID.
+- Validation ID used by the build.
+- Build status.
+- Row count summary.
+- Activation timestamp.
+- Error message if publication failed.
+
+This evidence is important because it proves that ClickHouse data was published from a validated lakehouse state.
 
 ---
 
-## 15. Power BI Screenshots
+## 17. Dashboard Screenshots
 
-Recommended final screenshot paths:
+The dashboard screenshots are stored in:
 
 ```text
-docs/assets/screenshots/12_powerbi_dashboard_growth_funnel.png
-docs/assets/screenshots/13_powerbi_dashboard_personalization.png
-docs/assets/screenshots/14_powerbi_data_model.png
+screenshots/16_powerbi_dashboard_growth_funnel.png
+screenshots/17_powerbi_dashboard_personalization.png
+screenshots/18_powerbi_data_model.png
 ```
 
-Dashboard screenshots should be exported at high resolution, preferably:
-
-
-KPI labels should be readable and not truncated.
+The README explains what each screenshot shows and what it proves.
 
 ---
 
+## 18. Serving Limitations
 
-## 16. Serving Validation Queries
-
-Example ClickHouse row count validation:
-
-```bash
-docker compose exec -T clickhouse bash -lc '
-clickhouse-client \
-  --user "$CLICKHOUSE_USER" \
-  --password "$CLICKHOUSE_PASSWORD" \
-  --database personalization_olap \
-  --query "
-SELECT
-    count() AS clickstream_rows,
-    max(event_timestamp) AS latest_event
-FROM v_fact_clickstream_event
-FORMAT PrettyCompact
-"
-'
-```
-
-Example view count validation:
-
-```bash
-docker compose exec -T clickhouse bash -lc '
-clickhouse-client \
-  --user "$CLICKHOUSE_USER" \
-  --password "$CLICKHOUSE_PASSWORD" \
-  --database personalization_olap \
-  --query "
-SELECT
-    name
-FROM system.tables
-WHERE database = '\''personalization_olap'\''
-ORDER BY name
-FORMAT PrettyCompact
-"
-'
-```
-
----
+- ClickHouse is a serving store, not the governed lakehouse source of truth.
+- Power BI uses Import mode and must be refreshed after serving publication.
+- The dashboard reflects the latest active serving build exposed by `v_*` views.
+- User SCD2 history is kept in Iceberg; Power BI uses current user dimension rows for the active serving build.
+- The personalization candidate mart is analytical ranking logic, not a trained machine learning recommendation model.

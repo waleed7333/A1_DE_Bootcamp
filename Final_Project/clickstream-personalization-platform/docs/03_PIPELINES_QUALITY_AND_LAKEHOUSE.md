@@ -1,38 +1,107 @@
-
-# Pipelines, Data Quality, and Lakehouse
+# Pipelines, Data Quality, and Lakehouse Design
 
 ## 1. Purpose
 
-This document describes the project processing pipelines, data quality controls, audit design, quarantine handling, and lakehouse table layout.
+This document explains the processing pipelines, lakehouse zones, Iceberg table layout, quality controls, quarantine handling, validation logic, watermarks, and reconciliation strategy used by the Clickstream Personalization Platform.
 
-Source contracts are documented in:
-
-```text
-docs/02_DATA_SOURCES_AND_CONTRACTS.md
-```
-
-Serving design is documented in:
-
-```text
-docs/04_SERVING_AND_DASHBOARDS.md
-```
+The project uses one Spark engine for both continuous Structured Streaming and scheduled batch jobs. The pipelines are intentionally separated by operational purpose: streaming handles continuous ingestion and cleaning, while batch handles SCD2, external enrichment, validation, and serving publication.
 
 ---
 
-## 2. Processing Paths
+## 2. Processing Path Summary
 
-The platform has two main processing paths:
-
-| Path           | Processing Engine             | Purpose                                                                                         |
-| -------------- | ----------------------------- | ----------------------------------------------------------------------------------------------- |
-| Streaming path | Spark Structured Streaming    | Continuous ingestion, validation, deduplication, GeoIP enrichment, clean Iceberg writes         |
-| Batch path     | Airflow-triggered Spark batch | Product load, User SCD2, weather enrichment, holiday enrichment, validation, ClickHouse publish |
+| Path | Inputs | Engine | Outputs |
+|---|---|---|---|
+| Streaming clickstream | Kafka `clickstream-events` | Spark Structured Streaming | Raw Kafka messages, `clickstream_clean`, quarantine, quality metrics. |
+| Streaming web logs | Kafka `webserver-logs` | Spark Structured Streaming | Raw Kafka messages, `webserver_logs_clean`, quarantine, quality metrics. |
+| Streaming CDC | Kafka `users-cdc`, `orders-cdc`, `order-items-cdc` | Spark Structured Streaming | CDC clean Iceberg tables. |
+| Product catalog bootstrap | Static CSV | Spark batch | `product_catalog_clean`. |
+| User SCD2 | `users_cdc_clean` | Spark batch | `user_profile_scd2`, `audit.watermarks`. |
+| Weather enrichment | `clickstream_clean` GeoIP coordinates | Spark batch + Open-Meteo | `weather_clean`, `external_api_failures`. |
+| Holiday enrichment | `clickstream_clean` country/year | Spark batch + Calendarific | `holidays_clean`, `external_api_failures`. |
+| Validation | Iceberg raw, processed, and audit tables | Spark batch | `validation_runs`, `reports/validation_latest.json`. |
+| Serving publish | Validated Iceberg tables | Spark batch + ClickHouse | ClickHouse dims/facts/marts/views, `serving_builds`, `reports/serving_latest.json`. |
 
 ---
 
-## 3. Streaming Pipeline
+## 3. Lakehouse Storage Design
 
-### 3.1 Inputs
+The lakehouse is implemented using Apache Iceberg tables stored on MinIO object storage. Spark accesses the lakehouse through the Iceberg catalog named `ecommerce`.
+
+| Namespace | Purpose |
+|---|---|
+| `ecommerce.raw` | Raw payload preservation. |
+| `ecommerce.processed` | Clean, structured, deduplicated, enriched tables. |
+| `ecommerce.audit` | Quality, quarantine, validation, serving, API, and watermark evidence. |
+
+Iceberg table properties use Parquet and zstd compression. Tables are partitioned by relevant fields such as ingestion date, event date, processed date, category, source name, or year depending on the table.
+
+---
+
+## 4. Raw Zone
+
+### 4.1 `ecommerce.raw.kafka_messages`
+
+The raw table stores original Kafka payloads from streaming sources. It preserves enough metadata to prove where each raw record came from.
+
+Main fields:
+
+| Field | Meaning |
+|---|---|
+| `source_name` | Logical source name such as `clickstream`, `web_logs`, or CDC source. |
+| `kafka_topic` | Kafka topic name. |
+| `kafka_partition` | Kafka partition. |
+| `kafka_offset` | Kafka offset. |
+| `kafka_timestamp` | Kafka timestamp. |
+| `source_record_id` | Source record identifier created from topic/partition/offset or source key. |
+| `raw_payload` | Original raw Kafka value. |
+| `source_file` | Source file path when available. |
+| `ingested_at` | Processing ingestion timestamp. |
+| `stream_batch_id` | Spark micro-batch ID. |
+
+The raw zone supports traceability, replay reasoning, validation evidence, and reconciliation.
+
+---
+
+## 5. Processed Zone
+
+The processed zone contains clean tables that are suitable for analytical processing and serving publication.
+
+| Table | Contents |
+|---|---|
+| `product_catalog_clean` | Valid static product reference data. |
+| `clickstream_clean` | Valid clickstream events with GeoIP enrichment and Kafka metadata. |
+| `webserver_logs_clean` | Valid web log records with GeoIP enrichment and Kafka metadata. |
+| `users_cdc_clean` | Valid user CDC events with Debezium and Kafka metadata. |
+| `orders_cdc_clean` | Valid order CDC events with Debezium and Kafka metadata. |
+| `order_items_cdc_clean` | Valid order item CDC events with Debezium and Kafka metadata. |
+| `user_profile_scd2` | Type 2 user profile history. |
+| `weather_clean` | Historical weather enrichment by location and hour. |
+| `holidays_clean` | Holiday enrichment by country and year/date. |
+
+---
+
+## 6. Audit Zone
+
+The audit zone stores evidence rather than business facts.
+
+| Table | Purpose |
+|---|---|
+| `pipeline_runs` | Run status and run-level counts. |
+| `quality_metrics` | Quality metric counters by source and metric name. |
+| `quarantine_records` | Invalid and duplicate records with reasons and raw payloads. |
+| `external_api_failures` | API failures and expected skips. |
+| `watermarks` | Incremental job progress. |
+| `validation_runs` | Validation and reconciliation results. |
+| `serving_builds` | ClickHouse serving build evidence. |
+
+Audit does not store every valid record. Valid records are stored in `ecommerce.processed.*`. Audit records document what happened, what failed, what was skipped, what was rejected, and what was published.
+
+---
+
+## 7. Streaming Ingestion Pipeline
+
+### 7.1 Streaming inputs
 
 Spark Structured Streaming consumes:
 
@@ -44,438 +113,289 @@ orders-cdc
 order-items-cdc
 ```
 
-### 3.2 Raw persistence
+### 7.2 Common streaming behavior
 
-Kafka messages are persisted to:
+For each relevant topic, the pipeline handles:
 
-```text
-raw.kafka_messages
-```
+- Kafka read.
+- Raw payload preservation.
+- Source-specific parsing.
+- Validation.
+- Deduplication where applicable.
+- Clean table write.
+- Quarantine write for invalid or duplicate records.
+- Quality metric write.
+- Pipeline run evidence write.
 
-This preserves Kafka-level metadata such as:
+### 7.3 Clickstream processing
 
-```text
-source_name
-kafka_topic
-kafka_partition
-kafka_offset
-kafka_timestamp
-source_record_id
-raw_payload
-source_file
-ingested_at
-stream_batch_id
-```
+Clickstream processing validates required fields and source contract rules. Clean records are enriched with GeoLite2 fields using `ip_address` and written to `clickstream_clean`.
 
-### 3.3 Clean streaming outputs
+Rejected examples include:
 
-Streaming jobs produce:
+- Missing event ID.
+- Unsupported event type.
+- Missing product ID for product-related events.
+- Unsupported contract version.
+- Malformed JSON.
+- Duplicate event ID.
 
-```text
-processed.clickstream_clean
-processed.webserver_logs_clean
-processed.users_cdc_clean
-processed.orders_cdc_clean
-processed.order_items_cdc_clean
-```
+### 7.4 Web log processing
 
-### 3.4 Streaming responsibilities
+Web log processing validates log-specific requirements and enriches valid records with GeoIP fields. Clean records are written to `webserver_logs_clean`.
 
-The streaming pipeline performs:
+Rejected examples include:
 
-* JSON parsing.
-* Contract validation.
-* Duplicate detection.
-* Late arrival tracking.
-* CDC payload parsing.
-* GeoIP enrichment for clickstream and web logs.
-* Kafka metadata preservation.
-* Clean Iceberg table writes.
-* Quarantine and audit updates.
+- Missing log ID.
+- Invalid status code.
+- Unsupported contract version.
+- Duplicate log ID.
+
+### 7.5 CDC processing
+
+CDC processing reads Debezium messages, extracts operation metadata, preserves before/after JSON, and writes clean CDC events for users, orders, and order items.
+
+CDC clean tables are event tables. They preserve change history and source metadata; they are not directly equivalent to current-state dimensions.
 
 ---
 
-## 4. CDC Pipeline
+## 8. Product Catalog Bootstrap
 
-### 4.1 CDC flow
+Product Catalog is loaded once during lakehouse bootstrap.
 
-```text
-PostgreSQL
-    → Debezium Connect
-    → Kafka CDC topics
-    → Spark Structured Streaming
-    → CDC clean Iceberg tables
-```
+The job:
 
-### 4.2 CDC topics
+1. Reads `data/reference/product_catalog.csv`.
+2. Verifies the file against the generation manifest checksum.
+3. Validates product IDs, names, categories, prices, and inventory.
+4. Rejects the load if invalid or duplicate product records exist.
+5. Writes the clean product catalog into `product_catalog_clean` if the table is empty.
 
-```text
-users-cdc
-orders-cdc
-order-items-cdc
-```
-
-### 4.3 CDC clean tables
-
-```text
-processed.users_cdc_clean
-processed.orders_cdc_clean
-processed.order_items_cdc_clean
-```
-
-### 4.4 User SCD Type 2
-
-User Profile history is built from:
-
-```text
-processed.users_cdc_clean
-```
-
-Target table:
-
-```text
-processed.user_profile_scd2
-```
-
-SCD Type 2 applies only to Users.
-
-Orders and Order Items remain CDC-derived clean tables and are later published as serving facts.
+Product Catalog is intentionally static and clean. It is not a CDC source and does not have incremental product snapshots in this project.
 
 ---
 
-## 5. Batch Pipeline
+## 9. User SCD Type 2 Pipeline
 
-Batch jobs are orchestrated by Airflow or by the project analytics refresh command.
+The User SCD2 job is a scheduled Spark batch job. It reads `users_cdc_clean` and writes `user_profile_scd2`.
 
-Main batch sequence:
+The SCD2 output preserves:
 
-```text
-user_scd2
-    → weather_enrichment
-    → holiday_enrichment
-    → validate_lakehouse
-    → publish_serving
-```
+- `effective_from`.
+- `effective_to`.
+- `is_current`.
+- `version_sequence`.
+- `is_deleted`.
+- `source_lsn`.
+- Profile attributes such as email, name, membership type, account status, country, and city.
 
-Recommended diagram:
+The job uses CDC ordering information such as `source_lsn` and `source_ts_ms` to process user changes. It records incremental progress in `ecommerce.audit.watermarks`.
 
-```text
-diagrams/06_orchestration_flow.png
-```
+SCD2 is applied only to users. Orders and order items remain CDC-cleaned event sources and are later transformed into serving facts.
 
 ---
 
-## 6. Product Catalog Batch Load
+## 10. Weather Enrichment Pipeline
 
-Product Catalog is loaded as a static CSV snapshot.
+The weather job reads clean clickstream data after GeoIP enrichment. It derives distinct latitude, longitude, and hour combinations and requests historical weather data from Open-Meteo.
 
-Input:
-
-```text
-data/source/product_catalog.csv
-```
-
-Output:
+The job writes:
 
 ```text
-processed.product_catalog_clean
+ecommerce.processed.weather_clean
 ```
 
-Product Catalog is not streamed and does not use CDC.
+Important behavior:
+
+- Weather requests are grouped to avoid one API call per event.
+- Weather data is historical.
+- Current or future UTC timestamps are skipped by design.
+- Skipped or failed API requests are recorded in `ecommerce.audit.external_api_failures`.
+
+This makes the job operationally explainable when current-day weather rows are unavailable.
 
 ---
 
-## 7. User SCD Type 2 Batch
+## 11. Holiday Enrichment Pipeline
 
-### 7.1 Input
+The holiday job reads distinct country/year combinations from clean clickstream GeoIP context and requests holiday data from Calendarific.
+
+The job writes:
 
 ```text
-processed.users_cdc_clean
+ecommerce.processed.holidays_clean
 ```
 
-### 7.2 Output
+The holiday data is used for context-aware analytics in ClickHouse marts.
+
+---
+
+## 12. Validation Pipeline
+
+The validation job checks whether the lakehouse is internally consistent before serving publication.
+
+Validation includes:
+
+- Raw-to-clean-to-quarantine reconciliation.
+- Quality status checks.
+- Relationship checks.
+- SCD2 checks.
+- Context coverage checks.
+- Orphan checks for product/order relationships.
+- Request correlation coverage.
+
+Validation writes evidence to:
 
 ```text
-processed.user_profile_scd2
+ecommerce.audit.validation_runs
+reports/validation_latest.json
 ```
 
-### 7.3 Main SCD2 fields
+Serving publication should proceed only after validation passes.
+
+---
+
+## 13. Serving Publication Pipeline
+
+The serving job reads validated Iceberg tables and writes ClickHouse physical tables. It then records the active serving build.
+
+Serving outputs include:
+
+- Dimensions.
+- Facts.
+- Marts.
+- Regular `v_*` views exposing the latest active build.
+- Serving build evidence.
+
+Serving evidence is written to:
 
 ```text
-user_id
-email
-first_name
-last_name
-membership_type
-account_status
-country_code
-city
-is_deleted
-effective_from
-effective_to
-is_current
-version_sequence
-source_lsn
-created_at
-updated_at
-processed_at
-```
-
-### 7.4 Validation expectations
-
-The SCD2 table must satisfy:
-
-```text
-duplicate_current_users = 0
-invalid_effective_ranges = 0
+ecommerce.audit.serving_builds
+reports/serving_latest.json
 ```
 
 ---
 
-## 8. Weather Enrichment Batch
+## 14. Data Quality Routing
 
-### 8.1 Input
-
-Weather keys are discovered from:
+Quality routing is explicit:
 
 ```text
-processed.clickstream_clean
+Valid records      → ecommerce.processed.*
+Invalid records    → ecommerce.audit.quarantine_records
+Duplicate records  → ecommerce.audit.quarantine_records
+Metrics/status     → ecommerce.audit.quality_metrics and pipeline_runs
+Validation proof   → ecommerce.audit.validation_runs
+Serving proof      → ecommerce.audit.serving_builds
 ```
 
-Required fields:
-
-```text
-geo_latitude
-geo_longitude
-event_timestamp
-```
-
-### 8.2 External source
-
-```text
-Open-Meteo Historical Weather API
-```
-
-### 8.3 Output
-
-```text
-processed.weather_clean
-```
-
-### 8.4 Operational behavior
-
-Current-day weather can be unavailable by design when using the historical archive. The enrichment job tracks coverage status and records failures in audit structures when applicable.
+The quarantine table stores enough data to explain why a record was rejected and where it came from.
 
 ---
 
-## 9. Holiday Enrichment Batch
+## 15. Quarantine Record Structure
 
-### 9.1 Input
+`ecommerce.audit.quarantine_records` contains:
 
-Holiday keys are discovered from:
+| Field | Meaning |
+|---|---|
+| `quarantine_id` | Unique quarantine record ID. |
+| `source_name` | Source that produced the rejected record. |
+| `reason_code` | Machine-readable reason. |
+| `reason_description` | Human-readable explanation. |
+| `raw_payload` | Original raw data. |
+| `kafka_topic` | Kafka topic. |
+| `kafka_partition` | Kafka partition. |
+| `kafka_offset` | Kafka offset. |
+| `source_record_id` | Source record reference. |
+| `stream_batch_id` | Spark micro-batch ID. |
+| `quarantined_at` | Timestamp when quarantine was written. |
 
-```text
-processed.clickstream_clean
-```
-
-Required fields:
-
-```text
-geo_country_code
-event_timestamp
-geo_timezone
-```
-
-### 9.2 External source
-
-```text
-Calendarific API
-```
-
-### 9.3 Output
-
-```text
-processed.holidays_clean
-```
-
-API failures are tracked in:
-
-```text
-audit.external_api_failures
-```
+This design supports evidence screenshots showing both aggregate counts and individual invalid/duplicate samples.
 
 ---
 
-## 10. Data Quality Model
+## 16. Reconciliation Rule
 
-The project uses explicit reconciliation:
+The reconciliation rule is:
 
 ```text
 Input = Accepted Clean + Rejected Quarantine + Duplicates
 ```
 
-This prevents silent record loss and allows source-level quality reporting.
+In validation reports, this appears as raw, clean, quarantine, and `reconciled=true` fields for streaming sources. It proves that invalid and duplicate records were accounted for rather than ignored.
 
 ---
 
-## 11. Quality Controls
+## 17. Watermarking
 
-| Control                   | Purpose                                                             |
-| ------------------------- | ------------------------------------------------------------------- |
-| Required field validation | Ensures mandatory identifiers and timestamps exist                  |
-| Event type validation     | Enforces the clickstream event contract                             |
-| Product event validation  | Ensures product events have `product_id`                            |
-| Checkout validation       | Ensures checkout events have required checkout/order keys           |
-| CDC operation validation  | Ensures CDC events use supported Debezium operation values          |
-| Duplicate detection       | Prevents duplicate records from entering clean analytics            |
-| Late arrival tracking     | Tracks records arriving outside expected event-time windows         |
-| API coverage tracking     | Separates expected coverage gaps from actual failures               |
-| SCD2 validation           | Ensures user profile history has valid current rows and date ranges |
-| Serving validation        | Ensures ClickHouse publish is based on validated lakehouse data     |
+The project uses two different watermark concepts.
 
----
+### 17.1 Spark event-time watermark
 
-## 12. Quarantine
-
-Invalid and duplicate records are tracked through quarantine structures.
-
-Quarantine records include:
-
-* Source name.
-* Record identifier.
-* Raw payload or source reference.
-* Rejection reason.
-* Processing timestamp.
-* Pipeline run identifier when available.
-
-Quarantine allows the project to retain evidence of rejected records without allowing them into clean analytical tables.
-
----
-
-## 13. Audit Tables
-
-The project maintains audit tables for operational transparency.
-
-| Table                         | Purpose                                                      |
-| ----------------------------- | ------------------------------------------------------------ |
-| `audit.pipeline_runs`         | Pipeline execution evidence                                  |
-| `audit.quality_metrics`       | Source-level input, accepted, rejected, and duplicate counts |
-| `audit.quarantine_records`    | Invalid and duplicate record evidence                        |
-| `audit.external_api_failures` | Weather and holiday API failure records                      |
-| `audit.watermarks`            | Streaming and batch watermark evidence                       |
-| `audit.validation_runs`       | Lakehouse validation results                                 |
-| `audit.serving_builds`        | ClickHouse serving build evidence                            |
-
----
-
-## 14. Lakehouse Zones
-
-The project uses logical processing zones rather than relying on generic Bronze/Silver/Gold naming.
-
-| Zone       | Purpose                                                                         |
-| ---------- | ------------------------------------------------------------------------------- |
-| Source     | Local generated files, PostgreSQL source tables, external APIs, GeoIP reference |
-| Raw        | Preserved Kafka payloads and Kafka metadata                                     |
-| Processed  | Validated, deduplicated, enriched Iceberg tables                                |
-| Audit      | Quality metrics, runs, failures, validation, serving builds                     |
-| Quarantine | Invalid and duplicate record evidence                                           |
-| Serving    | ClickHouse dimensions, facts, marts, and views                                  |
-
-Recommended diagram:
+Spark Structured Streaming uses event-time watermarking to bound event-time state and support streaming reliability. The allowed lateness setting is controlled by:
 
 ```text
-diagrams/03_lakehouse_zones.png
+streaming.allowed_lateness_minutes: 30
 ```
+
+Late records are also flagged with `late_arrival` in clean clickstream and web log tables.
+
+### 17.2 Incremental processing watermark
+
+The User SCD2 batch job stores progress in `ecommerce.audit.watermarks`, using CDC progress such as `source_lsn`. This prevents already-processed CDC records from being processed again in incremental SCD2 logic.
+
+These two watermark types solve different problems and should not be described as the same mechanism.
 
 ---
 
-## 15. Iceberg Tables
+## 18. Late Arrival Handling
 
-### 15.1 Raw table
+Late arrival handling does not mean that the project silently drops valid late records. Valid late records can be accepted and flagged with `late_arrival=true` when they fall outside the allowed event-time window relative to observed stream time.
 
-```text
-raw.kafka_messages
-```
-
-### 15.2 Processed tables
-
-```text
-processed.product_catalog_clean
-processed.clickstream_clean
-processed.webserver_logs_clean
-processed.users_cdc_clean
-processed.orders_cdc_clean
-processed.order_items_cdc_clean
-processed.user_profile_scd2
-processed.weather_clean
-processed.holidays_clean
-```
-
-### 15.3 Audit tables
-
-```text
-audit.pipeline_runs
-audit.quality_metrics
-audit.quarantine_records
-audit.external_api_failures
-audit.watermarks
-audit.validation_runs
-audit.serving_builds
-```
+This allows downstream analysis to distinguish normal events from late-arriving events without losing them.
 
 ---
 
-## 16. Validation Reports
+## 19. Evidence Commands
 
-The latest validation report is written to:
+The audit inspection job prints evidence for screenshots:
 
-```text
-reports/validation_latest.json
+```bash
+docker compose exec -T spark-engine bash -lc '
+cd /opt/project
+PYTHONPATH=/opt/project/spark_jobs \
+spark-submit --master local[2] \
+  --conf spark.ui.enabled=false \
+  /opt/project/spark_jobs/inspect_audit_counts.py \
+  2>/tmp/audit_spark_noise.log
+'
 ```
 
-The validation report is used to verify:
-
-* Required Iceberg tables exist.
-* Required row counts are present.
-* SCD2 constraints are satisfied.
-* Quarantine and audit checks are available.
-* Lakehouse data is ready for serving publish.
+The `2>/tmp/audit_spark_noise.log` redirection hides long Spark startup logs and leaves the evidence tables readable in the terminal.
 
 ---
 
-## 17. Serving Publish Dependency
+## 20. Pipeline Guarantees and Non-Guarantees
 
-ClickHouse serving publish should run after lakehouse validation passes.
+### 20.1 Guarantees implemented
 
-Expected sequence:
+- Raw Kafka payload preservation.
+- Clean table writes for valid data.
+- Quarantine writes for invalid and duplicate data.
+- CDC metadata preservation.
+- User SCD2 history.
+- External API skip/failure evidence.
+- Validation before serving publication.
+- Serving build evidence.
 
-```text
-validate_lakehouse
-    → publish_serving
-```
+### 20.2 Not implemented as production features
 
-If validation fails, serving publish should not be treated as reliable.
+- Managed cloud deployment.
+- Full automated schema evolution demonstration.
+- ML-based recommendation scoring.
+- Real-time dashboard refresh directly from Kafka.
+- Product CDC.
+- Order SCD2.
 
----
-
-## 18. Data Quality Diagram
-
-Recommended diagram:
-
-```text
-diagrams/07_data_quality_reconciliation.png
-```
-
-The diagram should show:
-
-```text
-Input Records
-    → Validation and Deduplication
-    → Accepted Clean
-    → Rejected Quarantine
-    → Duplicates
-    → Audit Metrics
-    → Validation Report
-```
-
----
+These are valid future enhancements but are outside the approved project scope.
