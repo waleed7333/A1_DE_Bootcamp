@@ -10,7 +10,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pyspark.sql import DataFrame, SparkSession, functions as F
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
 
 CATALOG = "ecommerce"
 REPORTS = Path("/opt/project/reports")
@@ -66,9 +67,7 @@ def read_completed_batch_id() -> int:
     batch_id = status.get("last_successful_batch_id")
 
     if batch_id is None:
-        raise RuntimeError(
-            "No completed Spark micro-batch is recorded; validation is unsafe"
-        )
+        raise RuntimeError("No completed Spark micro-batch is recorded; validation is unsafe")
 
     return int(batch_id)
 
@@ -103,28 +102,16 @@ def check_scd2(spark: SparkSession) -> tuple[bool, dict[str, int]]:
     current_rows = table.filter("is_current = true").count()
 
     duplicate_current = (
-        table.filter("is_current = true")
-        .groupBy("user_id")
-        .count()
-        .filter("count != 1")
-        .count()
+        table.filter("is_current = true").groupBy("user_id").count().filter("count != 1").count()
     )
 
     invalid_ranges = (
         table.filter("is_current = false")
-        .filter(
-            F.col("effective_to").isNull()
-            | (F.col("effective_to") <= F.col("effective_from"))
-        )
+        .filter(F.col("effective_to").isNull() | (F.col("effective_to") <= F.col("effective_from")))
         .count()
     )
 
-    passed = (
-        users > 0
-        and current_rows == users
-        and duplicate_current == 0
-        and invalid_ranges == 0
-    )
+    passed = users > 0 and current_rows == users and duplicate_current == 0 and invalid_ranges == 0
 
     return passed, {
         "users": users,
@@ -150,8 +137,7 @@ def main() -> int:
     raw_cutoff: DataFrame | None = None
 
     validation_id = (
-        f"validation_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}_"
-        f"{args.run_id[-8:]}"
+        f"validation_{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}_" f"{args.run_id[-8:]}"
     )
 
     try:
@@ -230,18 +216,12 @@ def main() -> int:
         web_logs = bounded_tables["web_logs"]
 
         clickstream_product_orphans = (
-            clickstream.filter(
-                F.col("product_id").isNotNull()
-                & (F.length("product_id") > 0)
-            )
+            clickstream.filter(F.col("product_id").isNotNull() & (F.length("product_id") > 0))
             .join(product_ids, "product_id", "left_anti")
             .count()
         )
 
-        eligible = (
-            clickstream.filter(F.col("request_id").isNotNull())
-            .count()
-        )
+        eligible = clickstream.filter(F.col("request_id").isNotNull()).count()
 
         matched = (
             clickstream.filter(F.col("request_id").isNotNull())
@@ -253,44 +233,26 @@ def main() -> int:
             .count()
         )
 
-        request_correlation_coverage = (
-            1.0 if eligible == 0 else matched / eligible
-        )
+        request_correlation_coverage = 1.0 if eligible == 0 else matched / eligible
 
-        relationship_ok = (
-            order_item_orphans == 0
-            and clickstream_product_orphans == 0
-        )
+        relationship_ok = order_item_orphans == 0 and clickstream_product_orphans == 0
 
         scd2_ok, scd2_metrics = check_scd2(spark)
 
-        coverage_status = (
-            "PASSED"
-            if request_correlation_coverage >= 0.95
-            else "PARTIAL"
-        )
+        coverage_status = "PASSED" if request_correlation_coverage >= 0.95 else "PARTIAL"
 
-        status = (
-            "PASSED"
-            if quality_ok and relationship_ok and scd2_ok
-            else "FAILED"
-        )
+        status = "PASSED" if quality_ok and relationship_ok and scd2_ok else "FAILED"
 
         payload = {
             "validation_id": validation_id,
             "status": status,
             "quality_status": "PASSED" if quality_ok else "FAILED",
-            "relationship_status": (
-                "PASSED" if relationship_ok else "FAILED"
-            ),
+            "relationship_status": ("PASSED" if relationship_ok else "FAILED"),
             "scd2_status": "PASSED" if scd2_ok else "FAILED",
             "coverage_status": coverage_status,
             "cutoff": {
                 "last_successful_stream_batch_id": cutoff_batch_id,
-                "rule": (
-                    "Only Raw records with stream_batch_id "
-                    "<= cutoff are validated"
-                ),
+                "rule": ("Only Raw records with stream_batch_id " "<= cutoff are validated"),
             },
             "details": {
                 **details,
@@ -307,12 +269,7 @@ def main() -> int:
                     validation_id,
                     status,
                     f"stream_batch_id <= {cutoff_batch_id}",
-                    json.dumps(
-                        {
-                            name: value["raw"]
-                            for name, value in details.items()
-                        }
-                    ),
+                    json.dumps({name: value["raw"] for name, value in details.items()}),
                     payload["quality_status"],
                     payload["relationship_status"],
                     payload["scd2_status"],

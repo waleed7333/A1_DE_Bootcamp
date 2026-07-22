@@ -114,10 +114,16 @@ def _container_results() -> list[InfraCheckResult]:
     for service, container_name in EXPECTED_CONTAINERS.items():
         runtime, health = _inspect_container(container_name)
         if runtime != "running":
-            results.append(_check_result("FAIL", f"Container: {service}", f"state={runtime}; {health}"))
+            results.append(
+                _check_result("FAIL", f"Container: {service}", f"state={runtime}; {health}")
+            )
             continue
         if health == "unhealthy":
-            results.append(_check_result("FAIL", f"Container: {service}", "Docker healthcheck reports unhealthy"))
+            results.append(
+                _check_result(
+                    "FAIL", f"Container: {service}", "Docker healthcheck reports unhealthy"
+                )
+            )
             continue
         detail = "running" if health == "none" else f"running; health={health}"
         results.append(_check_result("PASS", f"Container: {service}", detail))
@@ -130,11 +136,23 @@ def _optional_operational_container_results() -> list[InfraCheckResult]:
     for service, container_name in OPTIONAL_OPERATIONAL_CONTAINERS.items():
         runtime, health = _inspect_container(container_name)
         if runtime in {"missing", "created", "exited"}:
-            results.append(_check_result("SKIP", f"Container: {service}", "Optional Operations Console is not started"))
+            results.append(
+                _check_result(
+                    "SKIP", f"Container: {service}", "Optional Operations Console is not started"
+                )
+            )
         elif runtime != "running":
-            results.append(_check_result("WARN", f"Container: {service}", f"state={runtime}; {health}"))
+            results.append(
+                _check_result("WARN", f"Container: {service}", f"state={runtime}; {health}")
+            )
         elif health == "unhealthy":
-            results.append(_check_result("WARN", f"Container: {service}", "Optional Operations Console healthcheck is unhealthy"))
+            results.append(
+                _check_result(
+                    "WARN",
+                    f"Container: {service}",
+                    "Optional Operations Console healthcheck is unhealthy",
+                )
+            )
         else:
             detail = "running" if health == "none" else f"running; health={health}"
             results.append(_check_result("PASS", f"Container: {service}", detail))
@@ -178,11 +196,15 @@ def _check_kafka(settings: dict) -> InfraCheckResult:
     try:
         from confluent_kafka.admin import AdminClient
 
-        metadata = AdminClient({"bootstrap.servers": bootstrap, "socket.timeout.ms": 5000}).list_topics(timeout=8)
+        metadata = AdminClient(
+            {"bootstrap.servers": bootstrap, "socket.timeout.ms": 5000}
+        ).list_topics(timeout=8)
         broker_ids = sorted(metadata.brokers)
         if len(broker_ids) == 3:
             return _check_result("PASS", "Kafka cluster", f"3 brokers reachable: {broker_ids}")
-        return _check_result("FAIL", "Kafka cluster", f"Expected 3 brokers, found {len(broker_ids)}: {broker_ids}")
+        return _check_result(
+            "FAIL", "Kafka cluster", f"Expected 3 brokers, found {len(broker_ids)}: {broker_ids}"
+        )
     except Exception as error:
         return _check_result("FAIL", "Kafka cluster", str(error).split("\n", 1)[0])
 
@@ -207,11 +229,19 @@ def _check_minio(env_values: dict[str, str]) -> InfraCheckResult:
 
 def _check_spark(project_root: Path) -> InfraCheckResult:
     """Run Spark's own version command in the only Spark container."""
-    ok, detail = run_compose(project_root, ["exec", "-T", "spark-engine", "bash", "-lc", "spark-submit --version"], timeout=30)
+    ok, detail = run_compose(
+        project_root,
+        ["exec", "-T", "spark-engine", "bash", "-lc", "spark-submit --version"],
+        timeout=30,
+    )
     normalized = detail.replace("\n", " ")
     if ok and "3.5.0" in normalized:
-        return _check_result("PASS", "Spark engine", "spark-submit 3.5.0 is executable in spark-engine")
-    return _check_result("FAIL", "Spark engine", normalized[-300:] or "spark-submit did not succeed")
+        return _check_result(
+            "PASS", "Spark engine", "spark-submit 3.5.0 is executable in spark-engine"
+        )
+    return _check_result(
+        "FAIL", "Spark engine", normalized[-300:] or "spark-submit did not succeed"
+    )
 
 
 def _check_airflow(env_values: dict[str, str], project_root: Path) -> InfraCheckResult:
@@ -236,8 +266,12 @@ def _check_airflow(env_values: dict[str, str], project_root: Path) -> InfraCheck
             if isinstance(value, dict) and value.get("status") not in {"healthy", None}
         ]
         if not unhealthy:
-            return _check_result("PASS", "Airflow health", "HTTP 200; reported components are healthy")
-        return _check_result("FAIL", "Airflow health", f"HTTP 200 but unhealthy components: {unhealthy}")
+            return _check_result(
+                "PASS", "Airflow health", "HTTP 200; reported components are healthy"
+            )
+        return _check_result(
+            "FAIL", "Airflow health", f"HTTP 200 but unhealthy components: {unhealthy}"
+        )
 
     command_ok, command_detail = run_compose(
         project_root,
@@ -245,8 +279,12 @@ def _check_airflow(env_values: dict[str, str], project_root: Path) -> InfraCheck
         timeout=30,
     )
     if command_ok:
-        return _check_result("FAIL", "Airflow health", "API is still initializing; airflow CLI is reachable")
-    return _check_result("FAIL", "Airflow health", f"{detail}; CLI fallback: {command_detail[-180:]}")
+        return _check_result(
+            "FAIL", "Airflow health", "API is still initializing; airflow CLI is reachable"
+        )
+    return _check_result(
+        "FAIL", "Airflow health", f"{detail}; CLI fallback: {command_detail[-180:]}"
+    )
 
 
 def _check_clickhouse(env_values: dict[str, str]) -> InfraCheckResult:
@@ -274,7 +312,13 @@ def infrastructure_preflight(project_root: Path) -> tuple[list[InfraCheckResult]
 
     for key in INFRASTRUCTURE_SECRET_KEYS:
         if _is_placeholder(env_values.get(key)):
-            results.append(_check_result("FAIL", f"Required local secret: {key}", "Run: python main.py configure-dev-secrets"))
+            results.append(
+                _check_result(
+                    "FAIL",
+                    f"Required local secret: {key}",
+                    "Run: python main.py configure-dev-secrets",
+                )
+            )
         else:
             results.append(_check_result("PASS", f"Required local secret: {key}", "Configured"))
 
@@ -282,10 +326,20 @@ def infrastructure_preflight(project_root: Path) -> tuple[list[InfraCheckResult]
     for key in HOST_PORT_KEYS:
         value = env_values.get(key, "").strip()
         if not value.isdigit():
-            results.append(_check_result("FAIL", f"Host port: {key}", f"Invalid or missing value: {value or '<empty>'}"))
+            results.append(
+                _check_result(
+                    "FAIL", f"Host port: {key}", f"Invalid or missing value: {value or '<empty>'}"
+                )
+            )
             continue
         if value in used_ports:
-            results.append(_check_result("FAIL", "Host port uniqueness", f"{key} and {used_ports[value]} both use {value}"))
+            results.append(
+                _check_result(
+                    "FAIL",
+                    "Host port uniqueness",
+                    f"{key} and {used_ports[value]} both use {value}",
+                )
+            )
         else:
             used_ports[value] = key
             results.append(_check_result("PASS", f"Host port: {key}", value))
@@ -300,23 +354,59 @@ def infrastructure_preflight(project_root: Path) -> tuple[list[InfraCheckResult]
         init_services = sorted(name for name in service_names if "init" in name.lower())
         spark_services = [name for name in service_names if "spark" in name]
         if missing:
-            results.append(_check_result("FAIL", "Compose service contract", f"Missing core services: {missing}"))
+            results.append(
+                _check_result(
+                    "FAIL", "Compose service contract", f"Missing core services: {missing}"
+                )
+            )
         elif unexpected:
-            results.append(_check_result("FAIL", "Compose service contract", f"Unexpected services: {unexpected}"))
+            results.append(
+                _check_result(
+                    "FAIL", "Compose service contract", f"Unexpected services: {unexpected}"
+                )
+            )
         elif init_services:
-            results.append(_check_result("FAIL", "Compose service contract", f"Init services are forbidden: {init_services}"))
+            results.append(
+                _check_result(
+                    "FAIL",
+                    "Compose service contract",
+                    f"Init services are forbidden: {init_services}",
+                )
+            )
         elif spark_services != ["spark-engine"]:
-            results.append(_check_result("FAIL", "Compose service contract", f"Expected one spark-engine, found {spark_services}"))
+            results.append(
+                _check_result(
+                    "FAIL",
+                    "Compose service contract",
+                    f"Expected one spark-engine, found {spark_services}",
+                )
+            )
         else:
-            results.append(_check_result("PASS", "Compose service contract", "12 core services plus one optional Operations Console; no init services; one Spark container"))
+            results.append(
+                _check_result(
+                    "PASS",
+                    "Compose service contract",
+                    "12 core services plus one optional Operations Console; no init services; one Spark container",
+                )
+            )
     except Exception as error:
         results.append(_check_result("FAIL", "Compose service contract", str(error)))
 
     compose_ok, compose_detail = run_compose(project_root, ["config", "--quiet"], timeout=30)
     if compose_ok:
-        results.append(_check_result("PASS", "Docker Compose syntax", "docker compose config --quiet succeeded"))
+        results.append(
+            _check_result(
+                "PASS", "Docker Compose syntax", "docker compose config --quiet succeeded"
+            )
+        )
     else:
-        results.append(_check_result("FAIL", "Docker Compose syntax", compose_detail[-400:] or "docker compose config failed"))
+        results.append(
+            _check_result(
+                "FAIL",
+                "Docker Compose syntax",
+                compose_detail[-400:] or "docker compose config failed",
+            )
+        )
 
     passed = all(result.status != "FAIL" for result in results)
     return results, passed
@@ -356,9 +446,13 @@ def infra_up(project_root: Path, timeout_seconds: int) -> tuple[list[InfraCheckR
         _write_report(project_root, preflight_results, False)
         return preflight_results, False
 
-    started, detail = run_compose(project_root, ["up", "-d", "--build", "--remove-orphans"], stream_output=True)
+    started, detail = run_compose(
+        project_root, ["up", "-d", "--build", "--remove-orphans"], stream_output=True
+    )
     if not started:
-        result = _check_result("FAIL", "docker compose up", detail or "Docker Compose returned a non-zero status")
+        result = _check_result(
+            "FAIL", "docker compose up", detail or "Docker Compose returned a non-zero status"
+        )
         _write_report(project_root, [result], False)
         return [result], False
 
@@ -368,7 +462,9 @@ def infra_up(project_root: Path, timeout_seconds: int) -> tuple[list[InfraCheckR
         last_results, passed = run_infrastructure_check(project_root)
         if passed:
             return last_results, True
-        failed_checks = ", ".join(result.check for result in last_results if result.status == "FAIL")
+        failed_checks = ", ".join(
+            result.check for result in last_results if result.status == "FAIL"
+        )
         print(f"Infrastructure is still initializing: {failed_checks}")
         time.sleep(5)
 
@@ -381,6 +477,10 @@ def infra_down(project_root: Path) -> tuple[list[InfraCheckResult], bool]:
     result = _check_result(
         "PASS" if ok else "FAIL",
         "docker compose down",
-        "Containers stopped; named volumes and data/clickhouse were preserved" if ok else detail[-400:],
+        (
+            "Containers stopped; named volumes and data/clickhouse were preserved"
+            if ok
+            else detail[-400:]
+        ),
     )
     return [result], ok

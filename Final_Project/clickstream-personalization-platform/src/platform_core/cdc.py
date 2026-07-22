@@ -1,6 +1,6 @@
 """CDC: seed PostgreSQL from local CSV files and verify Debezium initial snapshots.
 
-This module deliberately does *not* run Spark Streaming. It proves the CDC hand-off only:
+This module verifies the CDC hand-off only:
 local CSV seed files -> PostgreSQL operational tables -> Debezium -> Kafka snapshot topics.
 """
 
@@ -14,14 +14,18 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
 import requests
 
 from platform_core.config import load_settings, read_dotenv
 from platform_core.infrastructure import run_infrastructure_check
 from platform_core.initializer import ensure_kafka_topics
-from platform_core.source_generation import ORDER_FIELDS, ORDER_ITEM_FIELDS, USER_FIELDS, validate_sources
+from platform_core.source_generation import (
+    ORDER_FIELDS,
+    ORDER_ITEM_FIELDS,
+    USER_FIELDS,
+    validate_sources,
+)
 
 USERS_FIELDS = USER_FIELDS
 ORDERS_FIELDS = ORDER_FIELDS
@@ -85,7 +89,11 @@ def _run_id(prefix: str) -> str:
 def _safe_error(error: Exception | str, *, limit: int = 500) -> str:
     """Return compact troubleshooting text and never serialize environment values."""
     message = str(error).replace("\n", " ").strip()
-    return message[-limit:] if message else type(error).__name__ if isinstance(error, Exception) else "Unknown error"
+    return (
+        message[-limit:]
+        if message
+        else type(error).__name__ if isinstance(error, Exception) else "Unknown error"
+    )
 
 
 def _utc_now() -> str:
@@ -111,7 +119,9 @@ def _load_seed_rows(project_root: Path) -> dict[str, list[dict[str, str]]]:
     return {
         "users": _read_csv(project_root / contract["users"]["seed_file"], USERS_FIELDS),
         "orders": _read_csv(project_root / contract["orders"]["seed_file"], ORDERS_FIELDS),
-        "order_items": _read_csv(project_root / contract["order_items"]["seed_file"], ORDER_ITEMS_FIELDS),
+        "order_items": _read_csv(
+            project_root / contract["order_items"]["seed_file"], ORDER_ITEMS_FIELDS
+        ),
     }
 
 
@@ -167,14 +177,20 @@ def _check_postgres_logical_replication(project_root: Path) -> CdcCheckResult:
         finally:
             connection.close()
         if wal_level != "logical":
-            return _result("FAIL", "PostgreSQL logical replication", f"wal_level={wal_level}; expected logical")
+            return _result(
+                "FAIL", "PostgreSQL logical replication", f"wal_level={wal_level}; expected logical"
+            )
         if slots < len(CDC_TABLES) or senders < len(CDC_TABLES):
             return _result(
                 "FAIL",
                 "PostgreSQL logical replication",
                 f"max_replication_slots={slots}, max_wal_senders={senders}; need at least {len(CDC_TABLES)}",
             )
-        return _result("PASS", "PostgreSQL logical replication", f"wal_level=logical; slots={slots}; wal_senders={senders}")
+        return _result(
+            "PASS",
+            "PostgreSQL logical replication",
+            f"wal_level=logical; slots={slots}; wal_senders={senders}",
+        )
     except Exception as error:
         return _result("FAIL", "PostgreSQL logical replication", _safe_error(error))
 
@@ -185,22 +201,58 @@ def cdc_preflight(project_root: Path) -> tuple[list[CdcCheckResult], bool]:
 
     infra_results, infra_ok = run_infrastructure_check(project_root)
     if infra_ok:
-        results.append(_result("PASS", "Infrastructure infrastructure", "All required platform containers and live service checks passed"))
+        results.append(
+            _result(
+                "PASS",
+                "Infrastructure infrastructure",
+                "All required platform containers and live service checks passed",
+            )
+        )
     else:
         failed = [item.check for item in infra_results if item.status == "FAIL"]
-        results.append(_result("FAIL", "Infrastructure infrastructure", f"Fix before CDC load: {', '.join(failed[:5])}"))
+        results.append(
+            _result(
+                "FAIL",
+                "Infrastructure infrastructure",
+                f"Fix before CDC load: {', '.join(failed[:5])}",
+            )
+        )
 
     source_results, source_ok = validate_sources(project_root, write_report=True)
     if source_ok:
-        results.append(_result("PASS", "Source Generation local sources", "CSV seed files and cross-source relationships passed"))
+        results.append(
+            _result(
+                "PASS",
+                "Source Generation local sources",
+                "CSV seed files and cross-source relationships passed",
+            )
+        )
     else:
         failed = [item.check for item in source_results if item.status == "FAIL"]
-        results.append(_result("FAIL", "Source Generation local sources", f"Fix before CDC load: {', '.join(failed[:5])}"))
+        results.append(
+            _result(
+                "FAIL",
+                "Source Generation local sources",
+                f"Fix before CDC load: {', '.join(failed[:5])}",
+            )
+        )
 
     if _initialization_passed(project_root):
-        results.append(_result("PASS", "Initialization initialization", "Kafka, PostgreSQL source schema, MinIO, and Iceberg catalog are verified"))
+        results.append(
+            _result(
+                "PASS",
+                "Initialization initialization",
+                "Kafka, PostgreSQL source schema, MinIO, and Iceberg catalog are verified",
+            )
+        )
     else:
-        results.append(_result("FAIL", "Initialization initialization", "Missing successful reports/init_report.json; run: python main.py init"))
+        results.append(
+            _result(
+                "FAIL",
+                "Initialization initialization",
+                "Missing successful reports/init_report.json; run: python main.py init",
+            )
+        )
 
     results.append(_check_postgres_logical_replication(project_root))
     passed = all(result.status == "PASS" for result in results)
@@ -242,36 +294,40 @@ def _seed_database(project_root: Path) -> CdcCheckResult:
 
             actual = _postgres_counts(connection)
             if actual != expected:
-                raise RuntimeError(f"PostgreSQL counts do not match seed files: actual={actual}, expected={expected}")
+                raise RuntimeError(
+                    f"PostgreSQL counts do not match seed files: actual={actual}, expected={expected}"
+                )
 
             with connection.cursor() as cursor:
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT COUNT(*)
                     FROM public.orders o
                     LEFT JOIN public.users u ON u.user_id = o.user_id
                     WHERE u.user_id IS NULL
-                    """
-                )
+                    """)
                 orphan_orders = int(cursor.fetchone()[0])
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT COUNT(*)
                     FROM public.order_items oi
                     LEFT JOIN public.orders o ON o.order_id = oi.order_id
                     WHERE o.order_id IS NULL
-                    """
-                )
+                    """)
                 orphan_items = int(cursor.fetchone()[0])
                 cursor.execute("SELECT COALESCE(SUM(total_amount), 0) FROM public.orders")
                 db_order_total = Decimal(str(cursor.fetchone()[0]))
                 cursor.execute("SELECT COALESCE(SUM(line_total), 0) FROM public.order_items")
                 db_item_total = Decimal(str(cursor.fetchone()[0]))
             if orphan_orders or orphan_items:
-                raise RuntimeError(f"Relational integrity failed: orphan_orders={orphan_orders}, orphan_items={orphan_items}")
+                raise RuntimeError(
+                    f"Relational integrity failed: orphan_orders={orphan_orders}, orphan_items={orphan_items}"
+                )
 
-            expected_order_total = sum((Decimal(row["total_amount"]) for row in rows["orders"]), Decimal("0"))
-            expected_item_total = sum((Decimal(row["line_total"]) for row in rows["order_items"]), Decimal("0"))
+            expected_order_total = sum(
+                (Decimal(row["total_amount"]) for row in rows["orders"]), Decimal("0")
+            )
+            expected_item_total = sum(
+                (Decimal(row["line_total"]) for row in rows["order_items"]), Decimal("0")
+            )
             if db_order_total != expected_order_total or db_item_total != expected_item_total:
                 raise RuntimeError(
                     "PostgreSQL monetary reconciliation failed: "
@@ -280,7 +336,11 @@ def _seed_database(project_root: Path) -> CdcCheckResult:
         finally:
             connection.close()
 
-        mode = "inserted from local CSV" if inserted else "already matched local CSV; no rows were reinserted"
+        mode = (
+            "inserted from local CSV"
+            if inserted
+            else "already matched local CSV; no rows were reinserted"
+        )
         return _result(
             "PASS",
             "PostgreSQL seed load",
@@ -353,7 +413,9 @@ def _register_connectors(project_root: Path) -> CdcCheckResult:
             name = spec["connector"]
             expected = _connector_config(project_root, spec)
             if name in existing:
-                config_response = requests.get(_connector_url(base_url, name) + "/config", timeout=10)
+                config_response = requests.get(
+                    _connector_url(base_url, name) + "/config", timeout=10
+                )
                 config_response.raise_for_status()
                 actual = config_response.json()
                 expected_pairs = {
@@ -365,9 +427,13 @@ def _register_connectors(project_root: Path) -> CdcCheckResult:
                     "transforms.route.regex": expected["transforms.route.regex"],
                     "transforms.route.replacement": expected["transforms.route.replacement"],
                 }
-                mismatches = [key for key, value in expected_pairs.items() if actual.get(key) != value]
+                mismatches = [
+                    key for key, value in expected_pairs.items() if actual.get(key) != value
+                ]
                 if mismatches:
-                    raise RuntimeError(f"Existing connector {name} does not match CDC contract: {', '.join(mismatches)}")
+                    raise RuntimeError(
+                        f"Existing connector {name} does not match CDC contract: {', '.join(mismatches)}"
+                    )
                 reused.append(name)
                 continue
 
@@ -377,7 +443,9 @@ def _register_connectors(project_root: Path) -> CdcCheckResult:
                 timeout=20,
             )
             if response.status_code not in {200, 201}:
-                raise RuntimeError(f"Connector {name} registration failed: HTTP {response.status_code}")
+                raise RuntimeError(
+                    f"Connector {name} registration failed: HTTP {response.status_code}"
+                )
             created.append(name)
 
         return _result(
@@ -410,13 +478,23 @@ def _wait_for_connector_tasks(project_root: Path, *, timeout_seconds: int = 180)
                 tasks = payload.get("tasks", [])
                 task_states = [str(task.get("state", "UNKNOWN")) for task in tasks]
                 states.append(f"{name}={connector_state}/{','.join(task_states) or 'no-task'}")
-                if connector_state != "RUNNING" or not task_states or any(state != "RUNNING" for state in task_states):
+                if (
+                    connector_state != "RUNNING"
+                    or not task_states
+                    or any(state != "RUNNING" for state in task_states)
+                ):
                     healthy = False
             if healthy:
-                return _result("PASS", "Debezium connector tasks", "All 3 connectors and their tasks are RUNNING")
+                return _result(
+                    "PASS",
+                    "Debezium connector tasks",
+                    "All 3 connectors and their tasks are RUNNING",
+                )
             last_detail = "; ".join(states) or last_detail
             time.sleep(3)
-        return _result("FAIL", "Debezium connector tasks", f"Timed out after {timeout_seconds}s: {last_detail}")
+        return _result(
+            "FAIL", "Debezium connector tasks", f"Timed out after {timeout_seconds}s: {last_detail}"
+        )
     except Exception as error:
         return _result("FAIL", "Debezium connector tasks", _safe_error(error))
 
@@ -441,10 +519,16 @@ def _wait_for_connect_api(project_root: Path, *, timeout_seconds: int) -> CdcChe
         except (requests.RequestException, ValueError) as error:
             last_detail = _safe_error(error)
         time.sleep(3)
-    return _result("FAIL", "Debezium Connect REST readiness", f"Timed out after {timeout_seconds}s: {last_detail}")
+    return _result(
+        "FAIL",
+        "Debezium Connect REST readiness",
+        f"Timed out after {timeout_seconds}s: {last_detail}",
+    )
 
 
-def ensure_cdc_connectors(project_root: Path, *, timeout_seconds: int = 180) -> tuple[list[CdcCheckResult], bool]:
+def ensure_cdc_connectors(
+    project_root: Path, *, timeout_seconds: int = 180
+) -> tuple[list[CdcCheckResult], bool]:
     """Ensure only the three approved Debezium connectors are present and running.
 
     This operational helper deliberately does not seed PostgreSQL and does not verify
@@ -510,7 +594,9 @@ def _read_snapshot_messages(
             try:
                 payload = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
             except Exception as error:
-                errors.append(f"non-JSON message at {topic}[{message.partition()}]@{message.offset()}: {error}")
+                errors.append(
+                    f"non-JSON message at {topic}[{message.partition()}]@{message.offset()}: {error}"
+                )
                 continue
             operation = payload.get("op")
             after = payload.get("after")
@@ -521,9 +607,15 @@ def _read_snapshot_messages(
             if not isinstance(after, dict) or not after.get(primary_key):
                 errors.append(f"message {count} has no after.{primary_key}")
                 continue
-            expected_table = {"user_id": "users", "order_id": "orders", "order_item_id": "order_items"}[primary_key]
+            expected_table = {
+                "user_id": "users",
+                "order_id": "orders",
+                "order_item_id": "order_items",
+            }[primary_key]
             if source.get("table") not in {None, expected_table}:
-                errors.append(f"message {count} source.table={source.get('table')!r}; expected {expected_table!r}")
+                errors.append(
+                    f"message {count} source.table={source.get('table')!r}; expected {expected_table!r}"
+                )
                 continue
             row_id = str(after[primary_key])
             if row_id in ids:
@@ -570,12 +662,16 @@ def _verify_snapshot_topics(project_root: Path, *, timeout_seconds: int = 180) -
 
         if failures:
             return _result("FAIL", "Debezium initial snapshot", "; ".join(failures))
-        return _result("PASS", "Debezium initial snapshot", ", ".join(details) + "; all messages have op='r'")
+        return _result(
+            "PASS", "Debezium initial snapshot", ", ".join(details) + "; all messages have op='r'"
+        )
     except Exception as error:
         return _result("FAIL", "Debezium initial snapshot", _safe_error(error))
 
 
-def _write_report(project_root: Path, results: list[CdcCheckResult], passed: bool, run_id: str) -> None:
+def _write_report(
+    project_root: Path, results: list[CdcCheckResult], passed: bool, run_id: str
+) -> None:
     payload = {
         "stage": "postgres_seed_and_debezium_initial_snapshot",
         "run_id": run_id,
@@ -584,7 +680,10 @@ def _write_report(project_root: Path, results: list[CdcCheckResult], passed: boo
         "results": [asdict(result) for result in results],
         "scope": {
             "postgres_tables": [spec["table"] for spec in CDC_TABLES],
-            "kafka_topics": [load_settings(project_root)["kafka"]["topics"][spec["topic_key"]] for spec in CDC_TABLES],
+            "kafka_topics": [
+                load_settings(project_root)["kafka"]["topics"][spec["topic_key"]]
+                for spec in CDC_TABLES
+            ],
             "spark_streaming_started": False,
         },
     }
@@ -618,7 +717,12 @@ def load_and_snapshot(project_root: Path) -> tuple[list[CdcCheckResult], bool, s
         _write_report(project_root, results, False, run_id)
         return results, False, run_id
 
-    for action in (_seed_database, _register_connectors, _wait_for_connector_tasks, _verify_snapshot_topics):
+    for action in (
+        _seed_database,
+        _register_connectors,
+        _wait_for_connector_tasks,
+        _verify_snapshot_topics,
+    ):
         result = action(project_root)
         results.append(result)
         if result.status != "PASS":
@@ -632,9 +736,8 @@ def load_and_snapshot(project_root: Path) -> tuple[list[CdcCheckResult], bool, s
     return results, passed, run_id
 
 
-
 def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
-    """Apply one idempotent CDC demonstration after the initial Debezium snapshot.
+    """Apply one idempotent controlled CDC mutation after the initial Debezium snapshot.
 
     The source seed files remain clean. These changes happen only in PostgreSQL so
     Debezium can prove update and delete propagation through Kafka.
@@ -644,7 +747,11 @@ def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
         try:
             prior = json.loads(state_path.read_text(encoding="utf-8"))
             if prior.get("status") == "PASSED":
-                return _result("PASS", "Controlled CDC mutations", "already applied; no database changes were repeated")
+                return _result(
+                    "PASS",
+                    "Controlled CDC mutations",
+                    "already applied; no database changes were repeated",
+                )
         except json.JSONDecodeError:
             # A malformed local state file is safe to replace after the database check below.
             pass
@@ -659,7 +766,9 @@ def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
                 )
                 user_row = cursor.fetchone()
                 if user_row is None:
-                    raise RuntimeError("No seeded user is available for the controlled membership update")
+                    raise RuntimeError(
+                        "No seeded user is available for the controlled membership update"
+                    )
                 updated_user_id = str(user_row[0])
                 cursor.execute(
                     "UPDATE public.users SET membership_type = 'premium', updated_at = NOW() WHERE user_id = %s",
@@ -672,15 +781,17 @@ def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
                 )
                 order_row = cursor.fetchone()
                 if order_row is None:
-                    raise RuntimeError("No seeded shipped order is available for the controlled order update")
+                    raise RuntimeError(
+                        "No seeded shipped order is available for the controlled order update"
+                    )
                 updated_order_id = str(order_row[0])
                 cursor.execute(
                     "UPDATE public.orders SET order_status = 'delivered', updated_at = NOW() WHERE order_id = %s",
                     (updated_order_id,),
                 )
 
-                # A temporary user has no orders. Inserting then deleting it proves the Debezium delete path
-                # without breaking any historical order relationship.
+                # A controlled user record is inserted and deleted to generate a deterministic CDC delete event
+                # without affecting historical order relationships.
                 deleted_user_id = "USR999999"
                 cursor.execute("SELECT 1 FROM public.users WHERE user_id = %s", (deleted_user_id,))
                 if cursor.fetchone() is None:
@@ -693,7 +804,7 @@ def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
                         """,
                         (
                             deleted_user_id,
-                            "deleted.demo.user@example.test",
+                            "deleted.user@example.test",
                             "Delete",
                             "Demo",
                             "standard",
@@ -713,17 +824,18 @@ def apply_controlled_mutations(project_root: Path) -> CdcCheckResult:
             "updated_user_id": updated_user_id,
             "updated_order_id": updated_order_id,
             "deleted_user_id": deleted_user_id,
-            "note": "Controlled mutations were applied after the Debezium snapshot to demonstrate CDC update and delete events.",
+            "note": "Controlled mutations were applied after the Debezium snapshot to generate CDC update and delete events.",
         }
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         return _result(
             "PASS",
             "Controlled CDC mutations",
-            f"updated user={updated_user_id}, updated order={updated_order_id}, deleted temporary user={deleted_user_id}",
+            f"updated user={updated_user_id}, updated order={updated_order_id}, deleted controlled user={deleted_user_id}",
         )
     except Exception as error:
         return _result("FAIL", "Controlled CDC mutations", _safe_error(error))
+
 
 def verify_cdc_snapshot(project_root: Path) -> tuple[list[CdcCheckResult], bool, str]:
     """Re-read PostgreSQL, connector status, and Kafka snapshot topics without creating records."""

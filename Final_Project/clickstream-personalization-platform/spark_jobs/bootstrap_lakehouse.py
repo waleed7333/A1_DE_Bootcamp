@@ -11,7 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType, IntegerType
 
 PROJECT_DATA = Path("/opt/project/data")
@@ -42,7 +43,9 @@ def sha256_file(path: Path) -> str:
 def write_report(run_id: str, payload: dict[str, Any]) -> None:
     PROJECT_RUNTIME.mkdir(parents=True, exist_ok=True)
     path = PROJECT_RUNTIME / f"bootstrap_lakehouse_{run_id}.json"
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8"
+    )
 
 
 def make_spark() -> SparkSession:
@@ -230,20 +233,29 @@ def load_static_catalog(spark: SparkSession) -> tuple[int, bool]:
         raise RuntimeError("Product Catalog checksum does not match generation manifest")
     raw = spark.read.option("header", True).option("mode", "FAILFAST").csv(str(CATALOG_PATH))
     parsed = raw.select(
-        F.trim("product_id").alias("product_id"), F.trim("product_name").alias("product_name"),
-        F.trim("category").alias("category"), F.col("price").cast(DecimalType(12, 2)).alias("price"),
+        F.trim("product_id").alias("product_id"),
+        F.trim("product_name").alias("product_name"),
+        F.trim("category").alias("category"),
+        F.col("price").cast(DecimalType(12, 2)).alias("price"),
         F.col("inventory").cast(IntegerType()).alias("inventory"),
         F.to_timestamp("created_at", "yyyy-MM-dd'T'HH:mm:ssX").alias("created_at"),
         F.to_timestamp("updated_at", "yyyy-MM-dd'T'HH:mm:ssX").alias("updated_at"),
-        F.lit(checksum).alias("catalog_checksum"), F.current_timestamp().alias("loaded_at"),
+        F.lit(checksum).alias("catalog_checksum"),
+        F.current_timestamp().alias("loaded_at"),
     )
     invalid = parsed.filter(
-        F.col("product_id").isNull() | (F.length("product_id") == 0) | F.col("product_name").isNull()
-        | F.col("category").isNull() | (F.col("price") < 0) | (F.col("inventory") < 0)
+        F.col("product_id").isNull()
+        | (F.length("product_id") == 0)
+        | F.col("product_name").isNull()
+        | F.col("category").isNull()
+        | (F.col("price") < 0)
+        | (F.col("inventory") < 0)
     ).count()
     duplicate = parsed.groupBy("product_id").count().filter("count > 1").count()
     if invalid or duplicate:
-        raise RuntimeError(f"Product Catalog validation failed: invalid={invalid}, duplicate={duplicate}")
+        raise RuntimeError(
+            f"Product Catalog validation failed: invalid={invalid}, duplicate={duplicate}"
+        )
     existing = spark.table(f"{CATALOG}.processed.product_catalog_clean").count()
     if existing == 0:
         parsed.writeTo(f"{CATALOG}.processed.product_catalog_clean").append()
@@ -258,13 +270,27 @@ def main() -> int:
         spark = make_spark()
         create_tables(spark)
         product_rows, inserted = load_static_catalog(spark)
-        write_report(args.run_id, {
-            "status": "PASSED", "run_id": args.run_id, "tables_created_or_verified": 17,
-            "product_catalog_rows": product_rows, "catalog_inserted": inserted, "finished_at_utc": now_utc(),
-        })
+        write_report(
+            args.run_id,
+            {
+                "status": "PASSED",
+                "run_id": args.run_id,
+                "tables_created_or_verified": 17,
+                "product_catalog_rows": product_rows,
+                "catalog_inserted": inserted,
+                "finished_at_utc": now_utc(),
+            },
+        )
         return 0
     except Exception as error:
-        write_report(args.run_id, {"status": "FAILED", "run_id": args.run_id, "error": f"{type(error).__name__}: {error}"})
+        write_report(
+            args.run_id,
+            {
+                "status": "FAILED",
+                "run_id": args.run_id,
+                "error": f"{type(error).__name__}: {error}",
+            },
+        )
         raise
     finally:
         if spark is not None:

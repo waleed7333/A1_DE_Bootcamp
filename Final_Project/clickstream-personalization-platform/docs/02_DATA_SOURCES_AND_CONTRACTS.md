@@ -1,510 +1,849 @@
 # Data Sources and Contracts
 
-## 1. Purpose
+## Purpose
 
-This document defines the approved data sources, source contracts, business keys, validation expectations, and downstream usage for the Clickstream Personalization Platform.
+This document defines the source data contracts used by **Clickstream Personalization Platform**.
 
-The project uses heterogeneous sources deliberately. Each source has a different ingestion style and business purpose. The contracts in this document prevent ambiguity between raw source files, Kafka topics, CDC payloads, local reference data, external APIs, clean Iceberg tables, and serving-layer outputs.
+The project integrates behavioral, operational, transactional, reference, geolocation, weather, and holiday data into a unified analytical platform. Each source has a defined ingestion method, ownership boundary, key structure, validation rules, and downstream analytical role.
+
+The source contracts are designed to support:
+
+```text
+Behavior analytics
+Journey analysis
+Funnel analysis
+Product performance
+Order attribution
+User profile history
+Geo and context enrichment
+Personalization candidate generation
+Power BI reporting
+```
+
+The platform keeps source ingestion, clean lakehouse storage, serving publication, and reporting responsibilities separated.
 
 ---
 
-## 2. Source Summary
+## Source Inventory
 
-| Source | Source category | Format | Ingestion method | Target |
+| Source | Category | Format / System | Ingestion Method | Primary Role |
 |---|---|---|---|---|
-| Clickstream Events | Behavioral events | JSONL | Direct publisher to Kafka | `clickstream-events` |
-| Web Server Logs | Infrastructure logs | Structured JSON `.log` | Filebeat to Kafka | `webserver-logs` |
-| Product Catalog | Reference/master data | CSV | Static Spark batch load | `product_catalog_clean` |
-| Users | Master data | PostgreSQL table | Debezium CDC to Kafka | `users-cdc`, `users_cdc_clean`, `user_profile_scd2` |
-| Orders | Transactional data | PostgreSQL table | Debezium CDC to Kafka | `orders-cdc`, `orders_cdc_clean` |
-| Order Items | Transactional line items | PostgreSQL table | Debezium CDC to Kafka | `order-items-cdc`, `order_items_cdc_clean` |
-| GeoLite2 City | Local reference data | `.mmdb` | Local Spark lookup | Geo fields in clean clickstream and web logs |
-| Open-Meteo | External context | JSON API | Scheduled Spark batch API pull | `weather_clean` |
-| Calendarific | External context | JSON API | Scheduled Spark batch API pull | `holidays_clean` |
+| Clickstream Events | Behavioral | JSONL | Local publisher to Kafka | Captures user interaction events. |
+| Web Server Logs | Operational | `.log` JSON lines | Filebeat to Kafka | Captures HTTP request and response behavior. |
+| Product Catalog | Reference | CSV | Spark batch load | Provides product attributes. |
+| Users | Transactional | PostgreSQL | Debezium CDC to Kafka | Captures user profile changes. |
+| Orders | Transactional | PostgreSQL | Debezium CDC to Kafka | Captures order-level transactions. |
+| Order Items | Transactional | PostgreSQL | Debezium CDC to Kafka | Captures line-item product sales. |
+| GeoIP Database | Enrichment | MaxMind GeoLite2 City `.mmdb` | Local Spark lookup | Adds location context from IP addresses. |
+| Weather | External Context | Open-Meteo API | Airflow-triggered Spark batch | Adds weather context by location and hour. |
+| Holidays | External Context | Calendarific API | Airflow-triggered Spark batch | Adds country-level holiday context. |
 
 ---
 
-## 3. Global Business Keys
+## Source-to-Pipeline Mapping
 
-| Key | Used by | Purpose |
+The sources enter the platform through two ingestion paths.
+
+### Streaming Sources
+
+| Source | Kafka Topic | Processing Path | Lakehouse Target |
+|---|---|---|---|
+| Clickstream Events | `clickstream-events` | Spark Structured Streaming | `ecommerce.processed.clickstream_clean` |
+| Web Server Logs | `webserver-logs` | Spark Structured Streaming | `ecommerce.processed.webserver_logs_clean` |
+| Users CDC | `users-cdc` | Spark Structured Streaming | `ecommerce.processed.users_cdc_clean` |
+| Orders CDC | `orders-cdc` | Spark Structured Streaming | `ecommerce.processed.orders_cdc_clean` |
+| Order Items CDC | `order-items-cdc` | Spark Structured Streaming | `ecommerce.processed.order_items_cdc_clean` |
+
+All Kafka messages are also preserved in:
+
+```text
+ecommerce.raw.kafka_messages
+```
+
+The raw table stores Kafka topic, partition, offset, key, value, source name, and ingestion metadata.
+
+### Batch and Reference Sources
+
+| Source | Processing Path | Lakehouse Target |
 |---|---|---|
-| `event_id` | Clickstream | Primary identifier for clickstream events and clickstream duplicate detection. |
-| `log_id` | Web logs | Primary identifier for web server log records and web log duplicate detection. |
-| `request_id` | Clickstream and web logs | Correlates user-facing behavior with server-side request performance. |
-| `session_id` | Clickstream | Groups user events into journeys. |
-| `visitor_id` | Clickstream | Identifies a visitor independent from account-level user identity. |
-| `user_id` | Clickstream, users, orders | Connects user behavior, user profiles, and orders. |
-| `checkout_id` | Clickstream and orders | Connects checkout events to order records. |
-| `order_id` | Clickstream, orders, order items | Connects checkout completion, order headers, and order lines. |
-| `order_item_id` | Order items | Primary identifier for order line records. |
-| `product_id` | Clickstream, product catalog, order items | Connects product behavior, catalog attributes, and purchased items. |
-| `ip_address` | Clickstream and web logs | Input to GeoLite2 enrichment. |
-| `latitude`, `longitude`, `weather_hour` | Clickstream clean and weather | Join keys for weather context. |
-| `country_code`, `holiday_date` | Clickstream clean and holidays | Join keys for holiday context. |
+| Product Catalog CSV | Spark batch load | `ecommerce.processed.product_catalog_clean` |
+| GeoIP Database | Spark enrichment lookup | Enriched clickstream and web log tables |
+| Open-Meteo Weather API | Airflow-triggered Spark batch | `ecommerce.processed.weather_clean` |
+| Calendarific Holiday API | Airflow-triggered Spark batch | `ecommerce.processed.holidays_clean` |
+
+Product catalog, GeoIP, weather, and holidays do not enter Kafka. They are handled through controlled batch and enrichment paths.
 
 ---
 
-## 4. Clickstream Events Contract
+## Business Key Model
 
-### 4.1 Source purpose
+The project connects source systems through stable business keys.
 
-Clickstream events represent client-side website behavior. They capture how users move through the website, what products they view, when they start checkout, and whether they complete purchase-related events.
+| Key | Source Area | Purpose |
+|---|---|---|
+| `event_id` | Clickstream | Unique behavioral event identifier. |
+| `request_id` | Clickstream, Web Logs | Links front-end behavior with web server request evidence. |
+| `session_id` | Clickstream | Groups user events into a browsing session. |
+| `visitor_id` | Clickstream | Tracks visitor behavior before user identification. |
+| `user_id` | Clickstream, Users, Orders | Links known users, profile history, sessions, and orders. |
+| `checkout_id` | Clickstream, Orders | Connects checkout events with order records. |
+| `order_id` | Orders, Order Items | Links order headers with line items. |
+| `product_id` | Clickstream, Order Items, Product Catalog | Connects product behavior, product reference data, and product sales. |
+| `event_timestamp` | Clickstream | Orders behavioral events and supports time-based analysis. |
+| `log_timestamp` | Web Logs | Orders web request records and supports web experience analysis. |
+| `source_lsn` | CDC | Preserves source database change ordering. |
+| `source_ts_ms` | CDC | Captures source change timestamp from Debezium. |
 
-### 4.2 Source format and ingestion
+---
 
-| Attribute | Value |
+## Relationship Contract
+
+![Business Key Relationships](../diagrams/08_business_key_relationships.png)
+
+The analytical model is built from the following relationships:
+
+| Relationship | Purpose |
 |---|---|
-| Source file | `data/source/clickstream/clickstream_events.jsonl` |
-| Topic | `clickstream-events` |
-| Format | One JSON object per line |
-| Ingestion | Direct Kafka publisher |
-| Processing | Spark Structured Streaming |
-| Clean target | `ecommerce.processed.clickstream_clean` |
+| `clickstream.request_id` → `web_logs.request_id` | Correlates user behavior with HTTP request evidence. |
+| `clickstream.checkout_id` → `orders.checkout_id` | Connects checkout behavior to transactional order outcomes. |
+| `clickstream.order_id` → `orders.order_id` | Connects completed checkout events with confirmed orders. |
+| `orders.order_id` → `order_items.order_id` | Connects order headers with product line items. |
+| `order_items.product_id` → `product_catalog.product_id` | Adds product name, category, price, and inventory attributes. |
+| `clickstream.product_id` → `product_catalog.product_id` | Adds product attributes to behavioral product events. |
+| `clickstream.user_id` → `user_profile_scd2.user_id` | Adds user profile context to known user behavior. |
+| `orders.user_id` → `user_profile_scd2.user_id` | Adds user profile context to purchases. |
+| `clickstream.geo fields` → `weather_clean` | Adds location and hour weather context. |
+| `clickstream.country/date` → `holidays_clean` | Adds country and date holiday context. |
 
-### 4.3 Main fields
+---
 
-| Field | Purpose |
+## Clickstream Events Contract
+
+### Purpose
+
+Clickstream events represent user behavior on the website or commerce application. They are the primary source for session analysis, journey analysis, funnel analysis, personalization signals, and product engagement.
+
+### Ingestion
+
+```text
+JSONL source file
+  → local publisher
+  → Kafka topic clickstream-events
+  → Spark Structured Streaming
+  → Iceberg raw and processed tables
+```
+
+### Target Tables
+
+| Layer | Table |
 |---|---|
-| `contract_version` | Source contract version. |
-| `event_id` | Primary event identifier. |
-| `event_timestamp` | Event occurrence time. |
-| `session_id` | Journey/session grouping key. |
-| `visitor_id` | Visitor identifier. |
-| `user_id` | Authenticated user identifier when available. |
-| `event_type` | Behavioral event type. |
-| `page_url` | Page or endpoint path visible to the user. |
-| `search_query` | Search term for search events. |
-| `product_id` | Product key for product-related events. |
-| `checkout_id` | Checkout key for checkout events. |
-| `order_id` | Order key for checkout completion events. |
-| `request_id` | Correlation key to web server logs for HTTP-backed events. |
-| `ip_address` | Input for GeoIP enrichment. |
-| `device_type`, `browser`, `operating_system` | Client context fields. |
-| `traffic_source` | Marketing or traffic source. |
-| `scroll_depth_pct` | Scroll engagement measure for scroll events. |
-| `time_on_page_seconds` | Page engagement duration. |
+| Raw | `ecommerce.raw.kafka_messages` |
+| Processed | `ecommerce.processed.clickstream_clean` |
+| Audit | `ecommerce.audit.quarantine_records`, `ecommerce.audit.quality_metrics`, `ecommerce.audit.pipeline_runs`, `ecommerce.audit.watermarks` |
 
-### 4.4 Supported event types
+### Main Fields
+
+| Field | Description |
+|---|---|
+| `event_id` | Unique event identifier. |
+| `event_timestamp` | Timestamp when the event occurred. |
+| `event_type` | Type of behavioral event. |
+| `session_id` | Session identifier. |
+| `visitor_id` | Anonymous visitor identifier. |
+| `user_id` | Known user identifier when available. |
+| `request_id` | Request correlation key for web log joins. |
+| `product_id` | Product identifier for product-scoped events. |
+| `checkout_id` | Checkout identifier for checkout-scoped events. |
+| `order_id` | Order identifier for completed checkout events. |
+| `page_url` | Page URL or route. |
+| `referrer_url` | Referring URL or page. |
+| `device_type` | Device category used by the visitor. |
+| `traffic_source` | Traffic source or acquisition channel. |
+| `ip_address` | IP address used for GeoIP enrichment. |
+| `user_agent` | Browser or client user agent. |
+| `time_on_page_seconds` | Engagement duration where available. |
+
+### Event Types
+
+The supported behavioral event types are:
 
 ```text
 page_view
 product_view
 search
-scroll
 add_to_cart
 remove_from_cart
 checkout_start
 checkout_complete
 login
 logout
+scroll
 ```
 
-### 4.5 Validation rules
+### Validation Rules
 
-The streaming pipeline validates clickstream records before writing clean data.
-
-| Rule | Reason |
+| Rule | Requirement |
 |---|---|
-| `event_id` is required | Needed for identity and deduplication. |
-| `session_id` is required | Needed for journey analysis. |
-| `event_type` is required and must be supported | Prevents unknown behavior categories from entering clean analytics. |
-| Product-related events require `product_id` | Required for product analysis and product dimension joins. |
-| Checkout events require `checkout_id` | Required for funnel and order correlation. |
-| `checkout_complete` requires `order_id` | Required for purchase completion correlation. |
-| Source contract version must be supported | Prevents incompatible schema versions from being accepted silently. |
-| Duplicate `event_id` is rejected | Preserves one accepted event per event identifier. |
+| Event identity | `event_id` is required. |
+| Session identity | `session_id` is required. |
+| Event type | `event_type` is required and must be supported. |
+| Timestamp | `event_timestamp` is required and must be parseable. |
+| Visitor identity | `visitor_id` is required. `user_id` is present when the visitor is known. |
+| Product events | `product_id` is required for `product_view`, `add_to_cart`, and `remove_from_cart`. |
+| Checkout events | `checkout_id` is required for `checkout_start` and checkout-related events. |
+| Completed checkout | `order_id` is required for `checkout_complete`. |
+| Deduplication | Duplicate `event_id` records are tracked and routed through quality evidence. |
+| Quarantine | Invalid records are written to quarantine with reason codes. |
 
-### 4.6 Downstream usage
+### Analytical Usage
 
-Clean clickstream events support:
+Clickstream data supports:
 
-- Funnel metrics.
-- Session journeys.
-- Navigation paths.
-- Product engagement.
-- User behavior analysis.
-- Geo/context enrichment.
-- Personalization candidate logic.
-- Request correlation with web logs through `request_id`.
-- Order correlation through `checkout_id` and `order_id`.
+- Session counting.
+- Active user behavior.
+- Returning user behavior.
+- Product view analysis.
+- Cart and checkout funnel analysis.
+- Search behavior.
+- Journey sequencing.
+- Personalization candidate generation.
+- Geo and context enrichment.
+- Web log correlation through `request_id`.
 
 ---
 
-## 5. Web Server Logs Contract
+## Web Server Logs Contract
 
-### 5.1 Source purpose
+### Purpose
 
-Web server logs represent server-side request evidence. They provide operational context such as HTTP method, endpoint, status code, response time, user agent, and bytes sent.
+Web server logs provide request-level operational evidence for website experience analysis. They complement clickstream events by capturing HTTP response behavior, latency, status codes, endpoints, user agents, and request correlation.
 
-### 5.2 Source format and ingestion
+### Ingestion
 
-| Attribute | Value |
+```text
+.log JSON lines
+  → Filebeat
+  → Kafka topic webserver-logs
+  → Spark Structured Streaming
+  → Iceberg raw and processed tables
+```
+
+### Target Tables
+
+| Layer | Table |
 |---|---|
-| Source file | `data/source/web_logs/webserver_access.log` |
-| Topic | `webserver-logs` |
-| Format | Structured JSON records stored as `.log` lines |
-| Ingestion | Filebeat tails the `.log` file and publishes to Kafka |
-| Processing | Spark Structured Streaming |
-| Clean target | `ecommerce.processed.webserver_logs_clean` |
+| Raw | `ecommerce.raw.kafka_messages` |
+| Processed | `ecommerce.processed.webserver_logs_clean` |
+| Audit | `ecommerce.audit.quarantine_records`, `ecommerce.audit.quality_metrics`, `ecommerce.audit.pipeline_runs`, `ecommerce.audit.watermarks` |
 
-### 5.3 Main fields
+### Main Fields
 
-| Field | Purpose |
+| Field | Description |
 |---|---|
-| `contract_version` | Source contract version. |
-| `log_id` | Primary log record identifier. |
-| `request_id` | Correlation key to clickstream events. |
-| `timestamp` | Server request time. |
-| `ip_address` | Input to GeoIP enrichment. |
-| `http_method` | Request method. |
-| `endpoint` | Requested endpoint. |
-| `status_code` | HTTP status code. |
-| `response_time_ms` | Server response duration. |
-| `user_agent` | Client user agent string. |
-| `bytes_sent` | Response payload size. |
+| `log_id` | Unique web log record identifier. |
+| `request_id` | Request correlation key used to join web logs with clickstream events. |
+| `log_timestamp` | Timestamp when the request was logged. |
+| `ip_address` | Request IP address used for GeoIP enrichment. |
+| `http_method` | HTTP method. |
+| `endpoint` | Request endpoint or route. |
+| `status_code` | HTTP response status code. |
+| `response_time_ms` | Request latency in milliseconds. |
+| `user_agent` | Request user agent. |
+| `bytes_sent` | Response size in bytes. |
+| `geo_country_code` | Enriched country code. |
+| `geo_country_name` | Enriched country name where available. |
+| `geo_city` | Enriched city. |
+| `geo_latitude` | Enriched latitude. |
+| `geo_longitude` | Enriched longitude. |
+| `geo_timezone` | Enriched timezone. |
 
-### 5.4 Validation rules
+### Validation Rules
 
-| Rule | Reason |
+| Rule | Requirement |
 |---|---|
-| `log_id` is required | Needed for identity and duplicate detection. |
-| `request_id` is required | Needed for clickstream correlation. |
-| `status_code` must be valid | Prevents impossible HTTP status values. |
-| Contract version must be supported | Prevents incompatible log schemas. |
-| Duplicate `log_id` is rejected | Prevents duplicate server-side request evidence. |
+| Log identity | `log_id` is required. |
+| Request identity | `request_id` is required. |
+| Timestamp | `log_timestamp` is required and must be parseable. |
+| HTTP method | `http_method` is required. |
+| Endpoint | `endpoint` is required. |
+| Status code | `status_code` is required and must be numeric. |
+| Response time | `response_time_ms` must be numeric when present. |
+| Deduplication | Duplicate `log_id` records are tracked through quality evidence. |
+| Quarantine | Invalid records are written to quarantine with reason codes. |
 
-### 5.5 Downstream usage
+### Analytical Usage
 
-Web logs are joined or aligned with clickstream behavior to analyze:
+Web server logs support:
 
-- Endpoint performance.
-- HTTP error context.
-- Response time impact.
-- Request correlation coverage.
-- Web experience metrics by date, endpoint, status code, and context.
+- Web experience monitoring.
+- Response latency analysis.
+- HTTP status distribution.
+- Endpoint performance analysis.
+- Clickstream-to-request correlation through `request_id`.
+- Country and city web traffic context.
 
 ---
 
-## 6. Product Catalog Contract
+## Product Catalog Contract
 
-### 6.1 Source purpose
+### Purpose
 
-Product Catalog is static reference data for product attributes. It is used to classify product behavior, product revenue, product engagement, and product performance.
+The product catalog is the static product reference source for the platform. It provides the descriptive and commercial attributes needed for product performance, funnel analysis, personalization, and Power BI reporting.
 
-### 6.2 Source format and ingestion
+### Ingestion
 
-| Attribute | Value |
+```text
+CSV reference file
+  → Spark batch load
+  → Iceberg processed table
+```
+
+### Target Table
+
+```text
+ecommerce.processed.product_catalog_clean
+```
+
+### Main Fields
+
+| Field | Description |
 |---|---|
-| Source file | `data/reference/product_catalog.csv` |
-| Format | CSV with header |
-| Mode | Static initial clean load only |
-| Processing | Spark batch during lakehouse bootstrap |
-| Clean target | `ecommerce.processed.product_catalog_clean` |
-
-### 6.3 Main fields
-
-| Field | Purpose |
-|---|---|
-| `product_id` | Product primary key. |
-| `product_name` | Display name. |
+| `product_id` | Product identifier. |
+| `product_name` | Product display name. |
 | `category` | Product category. |
-| `price` | Product reference price. |
-| `inventory` | Available inventory snapshot. |
-| `created_at`, `updated_at` | Reference timestamps. |
+| `price` | Product price. |
+| `inventory` | Available inventory count. |
+| `created_at` | Source creation timestamp. |
+| `updated_at` | Source update timestamp. |
+| `catalog_checksum` | Catalog row checksum used for reference integrity. |
+| `loaded_at` | Timestamp when the catalog row was loaded into the lakehouse. |
 
-The clean Iceberg table also stores `catalog_checksum` and `loaded_at` so the static file can be verified against the generation manifest.
+### Validation Rules
 
-### 6.4 Validation rules
-
-| Rule | Reason |
+| Rule | Requirement |
 |---|---|
-| Product ID is required | Needed for joins. |
-| Product ID must be unique | Prevents ambiguous product dimension rows. |
-| Product name and category are required | Needed for reporting. |
-| Price must not be negative | Prevents invalid revenue calculations. |
-| Inventory must not be negative | Prevents invalid stock interpretation. |
-| Checksum must match manifest | Confirms the static reference file was not changed unexpectedly. |
+| Product identity | `product_id` is required and unique. |
+| Product name | `product_name` is required. |
+| Category | `category` is required. |
+| Price | `price` must be non-negative. |
+| Inventory | `inventory` must be non-negative. |
+| Static reference | Product catalog is loaded as reference data and is not modeled as CDC. |
 
-### 6.5 Downstream usage
+### Analytical Usage
 
-Product Catalog joins to clickstream product events and order items through `product_id`. It supports product dimensions, category analysis, product performance marts, and personalization candidate outputs.
+Product catalog data supports:
+
+- Product dimension creation.
+- Product category analysis.
+- Product performance marts.
+- Revenue and units sold analysis.
+- Personalization candidate enrichment.
+- Power BI product slicers and dimensions.
 
 ---
 
-## 7. PostgreSQL Users CDC Contract
+## PostgreSQL Users CDC Contract
 
-### 7.1 Source purpose
+### Purpose
 
-The Users source provides customer profile state and profile changes. It is seeded into PostgreSQL and then captured through Debezium CDC.
+The users table represents user profile and account attributes. Changes are captured through Debezium CDC and used to build a clean CDC event table and an SCD Type 2 user profile dimension.
 
-### 7.2 Source format and ingestion
+### Ingestion
 
-| Attribute | Value |
+```text
+PostgreSQL users table
+  → Debezium connector
+  → Kafka topic users-cdc
+  → Spark Structured Streaming
+  → users_cdc_clean
+  → Spark Batch SCD2
+  → user_profile_scd2
+```
+
+### Target Tables
+
+| Layer | Table |
 |---|---|
-| Source table | `public.users` |
-| Seed file | `data/source/postgres/users_seed.csv` |
-| CDC topic | `users-cdc` |
-| CDC tool | Debezium Connect |
-| Clean CDC target | `ecommerce.processed.users_cdc_clean` |
-| SCD2 target | `ecommerce.processed.user_profile_scd2` |
+| Processed CDC | `ecommerce.processed.users_cdc_clean` |
+| Processed Dimension | `ecommerce.processed.user_profile_scd2` |
+| Serving Dimension | `personalization_olap.v_dim_user_current` |
 
-### 7.3 Main user fields
+### Main Fields
 
-| Field | Purpose |
+| Field | Description |
 |---|---|
-| `user_id` | User primary key. |
-| `email` | User email. |
-| `first_name`, `last_name` | Name attributes. |
-| `membership_type` | User segment. |
-| `account_status` | Active/inactive status. |
-| `country_code`, `city` | Profile location attributes. |
-| `created_at`, `updated_at` | Source timestamps. |
+| `user_id` | User identifier. |
+| `email` | User email address. |
+| `full_name` | User display name. |
+| `membership_type` | User membership tier or segment. |
+| `account_status` | User account state. |
+| `country_code` | User country code. |
+| `city` | User city. |
+| `op` | Debezium operation code. |
+| `source_lsn` | Source database log sequence number. |
+| `source_ts_ms` | Source change timestamp. |
+| `processed_at` | Processing timestamp. |
 
-### 7.4 CDC metadata fields preserved
+### CDC Operations
 
-| Field | Purpose |
+| Operation | Meaning |
 |---|---|
-| `operation` | Debezium operation code such as snapshot/read, create, update, delete. |
-| `before_json` | Previous row state. |
-| `after_json` | New row state. |
-| `source_lsn` | PostgreSQL log sequence position. |
-| `source_ts_ms` | Source event timestamp in milliseconds. |
-| `kafka_topic`, `kafka_partition`, `kafka_offset` | Kafka traceability metadata. |
-| `source_record_id` | Source-level record identifier. |
+| `r` | Initial Debezium snapshot record. |
+| `c` | Insert. |
+| `u` | Update. |
+| `d` | Delete. |
 
-### 7.5 SCD Type 2 behavior
+### SCD Type 2 Contract
 
-Only Users are modeled as SCD Type 2. The SCD2 job reads `users_cdc_clean`, orders changes by CDC metadata, and writes versioned profile rows to `user_profile_scd2`.
+The SCD2 user profile table maintains user history through:
 
-The SCD2 table includes:
+| Field | Description |
+|---|---|
+| `effective_from` | Start timestamp for the profile version. |
+| `effective_to` | End timestamp for the profile version. |
+| `is_current` | Indicates the active current profile row. |
+| `source_lsn` | CDC ordering and lineage reference. |
+| `source_ts_ms` | Source change timestamp. |
 
-- `effective_from`.
-- `effective_to`.
-- `is_current`.
-- `version_sequence`.
-- `is_deleted`.
-- `source_lsn`.
+### Analytical Usage
 
-This preserves historical user profile changes while still allowing ClickHouse to publish a current-user dimension for dashboard use.
+Users CDC and SCD2 support:
+
+- Current user dimension.
+- Historical user profile tracking.
+- Membership analysis.
+- User segmentation.
+- Order and behavior enrichment.
+- Accurate user context for serving views.
 
 ---
 
-## 8. PostgreSQL Orders CDC Contract
+## PostgreSQL Orders CDC Contract
 
-### 8.1 Source purpose
+### Purpose
 
-Orders represent transaction headers. They provide order-level status, payment state, currency, totals, checkout linkage, and revenue information.
+The orders table represents order-level transactions and purchase outcomes. It is captured through Debezium CDC and used for revenue, checkout completion, conversion, and order attribution analysis.
 
-### 8.2 Source format and ingestion
+### Ingestion
 
-| Attribute | Value |
+```text
+PostgreSQL orders table
+  → Debezium connector
+  → Kafka topic orders-cdc
+  → Spark Structured Streaming
+  → orders_cdc_clean
+```
+
+### Target Tables
+
+| Layer | Table |
 |---|---|
-| Source table | `public.orders` |
-| Seed file | `data/source/postgres/orders_seed.csv` |
-| CDC topic | `orders-cdc` |
-| CDC tool | Debezium Connect |
-| Clean target | `ecommerce.processed.orders_cdc_clean` |
+| Processed CDC | `ecommerce.processed.orders_cdc_clean` |
+| Serving Fact | `personalization_olap.v_fact_order` |
 
-### 8.3 Main fields
+### Main Fields
 
-| Field | Purpose |
+| Field | Description |
 |---|---|
-| `order_id` | Order primary key. |
-| `user_id` | User who owns the order. |
-| `checkout_id` | Checkout correlation key. |
-| `order_timestamp` | Order time. |
-| `order_status` | Business order state. |
-| `payment_status` | Payment outcome. |
-| `currency` | Currency code. |
-| `subtotal_amount`, `discount_amount`, `tax_amount`, `shipping_amount`, `total_amount` | Financial measures. |
-| `created_at`, `updated_at` | Source timestamps. |
+| `order_id` | Order identifier. |
+| `checkout_id` | Checkout identifier linking order outcome to clickstream activity. |
+| `user_id` | User who placed the order. |
+| `order_timestamp` | Order timestamp. |
+| `order_status` | Order status. |
+| `total_amount` | Order-level amount. |
+| `confirmed_purchase` | Purchase confirmation flag. |
+| `recognized_revenue` | Revenue recognized for confirmed orders. |
+| `country_code` | Order country context. |
+| `city` | Order city context. |
+| `membership_type_at_order` | User membership state at order time. |
+| `op` | Debezium operation code. |
+| `source_lsn` | Source database ordering metadata. |
+| `source_ts_ms` | Source change timestamp. |
 
-### 8.4 Downstream usage
+### Validation Rules
 
-Orders are used to build the ClickHouse order fact, revenue metrics, checkout completion analysis, and session/order correlation through `checkout_id` and `order_id`.
+| Rule | Requirement |
+|---|---|
+| Order identity | `order_id` is required. |
+| Checkout identity | `checkout_id` is required when order is connected to checkout behavior. |
+| User identity | `user_id` is required for user-level order analysis. |
+| Amount | Monetary values must be non-negative. |
+| Purchase flag | Confirmed purchase values must be normalized for analytical use. |
+| CDC metadata | `source_lsn` and `source_ts_ms` are preserved for lineage and ordering. |
 
-Orders are not modeled as SCD2 in this project. CDC changes are preserved in the clean CDC table and later transformed into serving facts.
+### Analytical Usage
+
+Orders CDC supports:
+
+- Purchase completion analysis.
+- Revenue reporting.
+- Checkout attribution.
+- Order-level facts.
+- User and membership revenue analysis.
+- Joining checkout events to transactional outcomes.
 
 ---
 
-## 9. PostgreSQL Order Items CDC Contract
+## PostgreSQL Order Items CDC Contract
 
-### 9.1 Source purpose
+### Purpose
 
-Order Items represent line-level purchase detail. They connect orders to products and quantify purchased items.
+The order items table represents product-level details for orders. It is captured through Debezium CDC and supports product revenue, units sold, category performance, and product-level attribution.
 
-### 9.2 Source format and ingestion
+### Ingestion
 
-| Attribute | Value |
+```text
+PostgreSQL order_items table
+  → Debezium connector
+  → Kafka topic order-items-cdc
+  → Spark Structured Streaming
+  → order_items_cdc_clean
+```
+
+### Target Tables
+
+| Layer | Table |
 |---|---|
-| Source table | `public.order_items` |
-| Seed file | `data/source/postgres/order_items_seed.csv` |
-| CDC topic | `order-items-cdc` |
-| CDC tool | Debezium Connect |
-| Clean target | `ecommerce.processed.order_items_cdc_clean` |
+| Processed CDC | `ecommerce.processed.order_items_cdc_clean` |
+| Serving Fact | `personalization_olap.v_fact_order_item` |
 
-### 9.3 Main fields
+### Main Fields
 
-| Field | Purpose |
+| Field | Description |
 |---|---|
-| `order_item_id` | Order item primary key. |
-| `order_id` | Parent order key. |
-| `product_id` | Purchased product key. |
-| `quantity` | Purchased quantity. |
-| `unit_price` | Unit price at order time. |
-| `line_total` | Line-level revenue. |
-| `created_at`, `updated_at` | Source timestamps. |
+| `order_item_id` | Order item identifier. |
+| `order_id` | Parent order identifier. |
+| `product_id` | Purchased product identifier. |
+| `quantity` | Quantity purchased. |
+| `unit_price` | Unit price at purchase time. |
+| `line_total` | Quantity multiplied by unit price. |
+| `op` | Debezium operation code. |
+| `source_lsn` | Source database ordering metadata. |
+| `source_ts_ms` | Source change timestamp. |
 
-### 9.4 Downstream usage
+### Validation Rules
 
-Order Items support product revenue, product conversion, order composition, and joins between order facts and product dimensions.
+| Rule | Requirement |
+|---|---|
+| Order item identity | `order_item_id` is required. |
+| Order relationship | `order_id` is required. |
+| Product relationship | `product_id` is required. |
+| Quantity | `quantity` must be positive. |
+| Price | `unit_price` must be non-negative. |
+| Line total | `line_total` must be non-negative. |
+| CDC metadata | CDC ordering and timestamp metadata are preserved. |
+
+### Analytical Usage
+
+Order items CDC supports:
+
+- Product-level sales analysis.
+- Units sold.
+- Revenue by product and category.
+- Product performance marts.
+- Joining transactions with product catalog attributes.
 
 ---
 
-## 10. GeoLite2 City Contract
+## GeoIP Enrichment Contract
 
-### 10.1 Source purpose
+### Purpose
 
-GeoLite2 City is a local reference database used to convert `ip_address` values into geographic context.
+GeoIP enrichment converts IP addresses into geographical context for behavioral and web experience analysis.
 
-### 10.2 Source format and usage
+### Source
 
-| Attribute | Value |
+```text
+MaxMind GeoLite2 City database
+```
+
+### Enrichment Outputs
+
+| Field | Description |
 |---|---|
-| File path | `data/reference/GeoLite2-City.mmdb` |
-| Format | MaxMind `.mmdb` |
-| Mode | Local reference lookup |
-| Used by | Spark Structured Streaming |
-| Output fields | country code, country name, city, latitude, longitude, timezone |
+| `geo_country_code` | Country code derived from IP address. |
+| `geo_country_name` | Country name where available. |
+| `geo_city` | City derived from IP address. |
+| `geo_latitude` | Latitude coordinate. |
+| `geo_longitude` | Longitude coordinate. |
+| `geo_timezone` | Timezone where available. |
 
-### 10.3 Important contract rule
+### Usage
 
-Source records contain `ip_address` only. Country and city are not trusted from generated source files. Geo fields are produced by Spark lookup using the local GeoLite2 database.
+GeoIP enrichment is applied to:
 
-### 10.4 Downstream usage
+```text
+clickstream_clean
+webserver_logs_clean
+```
 
-Geo fields support:
+### Analytical Usage
 
-- Country and city segmentation.
-- Weather enrichment keys through latitude and longitude.
-- Holiday enrichment keys through country code and local date logic.
-- Context impact analysis in ClickHouse marts.
+GeoIP enrichment supports:
+
+- Country-level traffic analysis.
+- City-level engagement analysis.
+- Weather enrichment location matching.
+- Holiday context by country.
+- Geographic dashboard slicers and visuals.
 
 ---
 
-## 11. Open-Meteo Weather Contract
+## Weather Context Contract
 
-### 11.1 Source purpose
+### Purpose
 
-Open-Meteo provides historical weather context for observed clickstream locations and event hours.
+Weather context adds environmental signals to user behavior and session analysis. Weather enrichment is performed as a scheduled batch job using distinct location and hour combinations observed in clean clickstream data.
 
-### 11.2 Source format and usage
+### Source
 
-| Attribute | Value |
+```text
+Open-Meteo historical weather API
+```
+
+### Target Table
+
+```text
+ecommerce.processed.weather_clean
+```
+
+### Main Fields
+
+| Field | Description |
 |---|---|
-| API | Open-Meteo Historical Weather API |
-| API key | Not required |
-| Mode | Scheduled Spark batch pull |
-| Input keys | latitude, longitude, weather hour/date range |
-| Clean target | `ecommerce.processed.weather_clean` |
-
-### 11.3 Output fields
-
-| Field | Purpose |
-|---|---|
-| `weather_key` | Unique weather record key. |
-| `latitude`, `longitude` | Weather location keys. |
+| `weather_key` | Stable key for location and weather hour. |
+| `latitude` | Latitude used for API lookup. |
+| `longitude` | Longitude used for API lookup. |
 | `weather_hour` | Hourly weather timestamp. |
 | `temperature_c` | Temperature in Celsius. |
-| `precipitation_mm` | Precipitation amount. |
-| `weather_code` | Weather code from provider. |
-| `weather_condition` | Interpreted weather condition. |
-| `coverage_status` | Indicates API coverage status. |
-| `fetched_at` | Batch fetch timestamp. |
+| `precipitation_mm` | Precipitation in millimeters. |
+| `weather_code` | Weather condition code. |
+| `weather_condition` | Weather condition label. |
+| `coverage_status` | Coverage status for the weather lookup. |
+| `fetched_at` | Timestamp when the enrichment was fetched. |
 
-### 11.4 Current-day behavior
+### Analytical Usage
 
-The project uses a historical weather archive. Current or future UTC timestamps are intentionally skipped and recorded as external API evidence with status `SKIPPED`. This is expected behavior, not a platform failure.
+Weather context supports:
+
+- Weather impact analysis.
+- Context-aware engagement analysis.
+- Weather and product behavior comparison.
+- Contextual dashboard visuals.
 
 ---
 
-## 12. Calendarific Holiday Contract
+## Holiday Context Contract
 
-### 12.1 Source purpose
+### Purpose
 
-Calendarific provides public holiday context by country and year. This allows behavior to be analyzed alongside holiday calendars.
+Holiday context adds country-level calendar signals to user behavior and revenue analysis. Holiday enrichment is performed through scheduled batch processing based on countries and years observed in clean analytical data.
 
-### 12.2 Source format and usage
+### Source
 
-| Attribute | Value |
+```text
+Calendarific API
+```
+
+### Target Table
+
+```text
+ecommerce.processed.holidays_clean
+```
+
+### Main Fields
+
+| Field | Description |
 |---|---|
-| API | Calendarific |
-| API key | Required in `.env` as `CALENDARIFIC_API_KEY` |
-| Mode | Scheduled Spark batch pull |
-| Input keys | country code and year |
-| Clean target | `ecommerce.processed.holidays_clean` |
-
-### 12.3 Output fields
-
-| Field | Purpose |
-|---|---|
-| `holiday_key` | Unique holiday record key. |
+| `holiday_key` | Stable key for country and holiday date. |
 | `country_code` | Country code. |
 | `holiday_date` | Holiday date. |
 | `holiday_name` | Holiday name. |
-| `holiday_type` | Holiday type/category. |
-| `year` | Calendar year. |
-| `coverage_status` | API coverage status. |
-| `fetched_at` | Batch fetch timestamp. |
+| `holiday_type` | Holiday category or type. |
+| `year` | Holiday year. |
+| `coverage_status` | Coverage status for the holiday enrichment record. |
+| `fetched_at` | Timestamp when the enrichment was fetched. |
+
+### Analytical Usage
+
+Holiday context supports:
+
+- Holiday impact analysis.
+- Country-level context analysis.
+- Revenue and engagement comparison by holiday period.
+- Context-aware Power BI reporting.
 
 ---
 
-## 13. Source Generation Counts
+## Kafka Topic Contract
 
-The deterministic source generation settings are defined in `config/settings.yaml`.
+The platform separates business data topics from Kafka Connect internal topics.
 
-| Setting | Value |
-|---|---:|
-| Product catalog count | 72 |
-| User count | 96 |
-| Order count | 48 |
-| Order item count | 96 |
-| Abandoned session count | 24 |
-| Browsing session count | 24 |
-| Invalid clickstream records | 5 |
-| Duplicate clickstream records | 2 |
-| Invalid web log records | 4 |
-| Duplicate web log records | 2 |
-| Late event count | 2 |
+### Business Topics
 
-The source files intentionally include valid, invalid, duplicate, and late-arrival examples. This is required for proving quality controls and quarantine behavior.
-
----
-
-## 14. Downstream Relationship Map
-
-| Relationship | Key |
+| Topic | Source |
 |---|---|
-| Clickstream to web logs | `request_id` |
-| Clickstream to users | `user_id` |
-| Clickstream to orders | `checkout_id`, `order_id` |
-| Orders to order items | `order_id` |
-| Order items to product catalog | `product_id` |
-| Clickstream product events to product catalog | `product_id` |
-| Clickstream and web logs to GeoIP | `ip_address` |
-| Clickstream clean to weather | rounded latitude, rounded longitude, event hour |
-| Clickstream clean to holidays | country code and local event date/year |
+| `clickstream-events` | Clickstream event publisher. |
+| `webserver-logs` | Filebeat web log shipper. |
+| `users-cdc` | Debezium users connector. |
+| `orders-cdc` | Debezium orders connector. |
+| `order-items-cdc` | Debezium order items connector. |
+
+### Kafka Connect Internal Topics
+
+| Topic | Purpose |
+|---|---|
+| `debezium-connect-configs` | Kafka Connect connector configuration state. |
+| `debezium-connect-offsets` | Kafka Connect source offset tracking. |
+| `debezium-connect-status` | Kafka Connect connector and task status. |
+
+Business topics are consumed by Spark Structured Streaming. Kafka Connect internal topics are managed by Debezium Connect and are not part of the analytical model.
 
 ---
 
-## 15. Contract Boundaries
+## Clean Table Contract
 
-The following boundaries are important:
+The processed lakehouse tables represent the clean analytical contract.
 
-- Raw source files are not final analytical tables.
-- Kafka topics are transport contracts, not dashboard models.
-- CDC clean tables preserve change events, not only current state.
-- `user_profile_scd2` is the historical user profile table.
-- ClickHouse `dim_user_current` is the current user dimension for a serving build, not the full SCD2 table.
-- `v_*` ClickHouse views expose the latest active serving build.
-- Power BI must not connect directly to raw Kafka, PostgreSQL source tables, or Iceberg raw/audit tables.
+| Clean Table | Built From | Main Purpose |
+|---|---|---|
+| `product_catalog_clean` | Product Catalog CSV | Product reference dimension. |
+| `clickstream_clean` | Clickstream Kafka topic | Behavioral event analytics. |
+| `webserver_logs_clean` | Web log Kafka topic | Web experience analytics. |
+| `users_cdc_clean` | Users CDC topic | User CDC event history. |
+| `orders_cdc_clean` | Orders CDC topic | Order CDC event history. |
+| `order_items_cdc_clean` | Order Items CDC topic | Order item CDC event history. |
+| `user_profile_scd2` | Users CDC clean table | Historical and current user profile dimension. |
+| `weather_clean` | Open-Meteo API | Weather context. |
+| `holidays_clean` | Calendarific API | Holiday context. |
+
+---
+
+## Quarantine Contract
+
+Invalid and duplicate records are not silently discarded. They are written to audit evidence.
+
+Target table:
+
+```text
+ecommerce.audit.quarantine_records
+```
+
+### Quarantine Fields
+
+| Field | Description |
+|---|---|
+| `source_name` | Source or topic that produced the record. |
+| `record_key` | Source-level record identifier where available. |
+| `reason_code` | Structured reason for quarantine. |
+| `raw_payload` | Raw record payload or representative payload. |
+| `quarantined_at` | Timestamp when the record was quarantined. |
+| `pipeline_run_id` | Pipeline run associated with the quarantine record. |
+
+### Quarantine Categories
+
+| Category | Meaning |
+|---|---|
+| Invalid records | Records that fail required field, type, timestamp, or source-specific validation. |
+| Duplicate records | Records identified as duplicates by source-level identifiers. |
+| Parse failures | Records that cannot be parsed into the expected structure. |
+| Contract violations | Records that violate event-specific or CDC-specific expectations. |
+
+---
+
+## Data Quality Contract
+
+The data quality model uses explicit reconciliation:
+
+```text
+Input records = Accepted records + Rejected records + Duplicate records
+```
+
+Quality metrics are recorded in:
+
+```text
+ecommerce.audit.quality_metrics
+```
+
+### Quality Metric Fields
+
+| Field | Description |
+|---|---|
+| `pipeline_run_id` | Pipeline run identifier. |
+| `source_name` | Source being measured. |
+| `input_records` | Number of records read from the source. |
+| `accepted_records` | Number of records written to clean tables. |
+| `rejected_records` | Number of invalid records routed to quarantine. |
+| `duplicate_records` | Number of duplicate records detected. |
+| `recorded_at` | Metric timestamp. |
+
+The quality contract makes ingestion behavior measurable, auditable, and suitable for operational evidence.
+
+---
+
+## Serving Source Contract
+
+ClickHouse serving outputs are built from clean Iceberg data and published by the `publish_serving` Spark job.
+
+Power BI consumes only stable ClickHouse `v_*` views.
+
+### Final Serving Views
+
+| View | Analytical Role |
+|---|---|
+| `v_dim_date` | Date dimension. |
+| `v_dim_product` | Product dimension. |
+| `v_dim_user_current` | Current user profile dimension. |
+| `v_fact_clickstream_event` | Clickstream event fact. |
+| `v_fact_order` | Order fact. |
+| `v_fact_order_item` | Order item fact. |
+| `v_mart_journey_session` | Session-level journey mart. |
+| `v_mart_navigation_paths` | Navigation path mart. |
+| `v_mart_product_performance_daily` | Daily product performance mart. |
+| `v_mart_web_experience_daily` | Daily web experience mart. |
+| `v_mart_context_impact_daily` | Daily context impact mart. |
+| `v_mart_personalization_candidates` | Personalization candidate mart. |
+
+The serving view contract keeps the BI model stable and prevents Power BI from depending on raw, internal, or audit storage layers.
+
+---
+
+## Source Ownership Boundaries
+
+The platform maintains clear ownership boundaries between source data, processing outputs, and serving views.
+
+| Layer | Owns | Does Not Own |
+|---|---|---|
+| Source systems | Original events, logs, relational records, reference files, and context APIs. | Clean analytics tables or dashboard logic. |
+| Kafka | Transport of streaming source records. | Final analytical storage or BI semantics. |
+| Spark Streaming | Continuous parsing, validation, enrichment, deduplication, and clean table writes. | Dashboard calculations. |
+| Spark Batch | SCD2, external context enrichment, validation, and serving publication. | User-facing dashboard layout. |
+| Iceberg | Raw, processed, quarantine, and audit table storage. | Power BI presentation model. |
+| ClickHouse | Curated serving tables and stable `v_*` reporting views. | Raw ingestion storage. |
+| Power BI | Semantic measures, ratios, slicers, visuals, and dashboard pages. | Raw pipeline processing. |
+
+---
+
+## Contract Summary
+
+The source contract can be summarized as:
+
+```text
+Behavioral data      → Clickstream Kafka topic
+Operational logs     → Filebeat Kafka topic
+Transactional data   → Debezium CDC Kafka topics
+Reference data       → Spark batch load
+Geo context          → Local GeoIP enrichment
+Weather context      → Scheduled API enrichment
+Holiday context      → Scheduled API enrichment
+        ↓
+Spark processing
+        ↓
+Iceberg raw, processed, quarantine, and audit tables
+        ↓
+ClickHouse serving views
+        ↓
+Power BI dashboard
+```
+
+The project uses source-specific validation rules, stable business keys, CDC metadata, and audit evidence to keep the analytical model consistent from ingestion through reporting.

@@ -66,7 +66,13 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _inspect(container: str) -> tuple[str, str, bool]:
-    command = ["docker", "inspect", "-f", "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.OOMKilled}}", container]
+    command = [
+        "docker",
+        "inspect",
+        "-f",
+        "{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.State.OOMKilled}}",
+        container,
+    ]
     try:
         result = subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
     except OSError as error:
@@ -119,9 +125,7 @@ def _service_checks(project_root: Path) -> list[OperationCheck]:
 def _pipeline_checks(project_root: Path) -> list[OperationCheck]:
     checks: list[OperationCheck] = []
 
-    streaming = _read_json(
-        project_root / "runtime" / "streaming_status.json"
-    ) or {}
+    streaming = _read_json(project_root / "runtime" / "streaming_status.json") or {}
 
     if str(streaming.get("status", "")).upper() == "RUNNING":
         last_batch_id = streaming.get(
@@ -145,13 +149,9 @@ def _pipeline_checks(project_root: Path) -> list[OperationCheck]:
             )
         )
 
-    validation = _read_json(
-        project_root / "reports" / "validation_latest.json"
-    ) or {}
+    validation = _read_json(project_root / "reports" / "validation_latest.json") or {}
 
-    validation_status = str(
-        validation.get("status", "MISSING")
-    ).upper()
+    validation_status = str(validation.get("status", "MISSING")).upper()
 
     checks.append(
         OperationCheck(
@@ -161,14 +161,10 @@ def _pipeline_checks(project_root: Path) -> list[OperationCheck]:
         )
     )
 
-    serving = _read_json(
-        project_root / "reports" / "serving_latest.json"
-    ) or {}
+    serving = _read_json(project_root / "reports" / "serving_latest.json") or {}
 
     serving_status = str(serving.get("status", "MISSING")).upper()
-    serving_detail = str(
-        serving.get("serving_build_id", "No active build recorded")
-    )
+    serving_detail = str(serving.get("serving_build_id", "No active build recorded"))
 
     checks.append(
         OperationCheck(
@@ -185,7 +181,7 @@ def _overall(checks: list[OperationCheck]) -> str:
     if any(check.status == "FAIL" for check in checks):
         return "UNHEALTHY"
     if any(check.status == "WARN" for check in checks):
-        return "DEGRADED"
+        return "ATTENTION"
     return "HEALTHY"
 
 
@@ -208,7 +204,6 @@ def collect_status(project_root: Path, *, persist: bool = True) -> tuple[dict[st
         with history.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload) + "\n")
     return payload, overall != "UNHEALTHY"
-
 
 
 def _collector_pid_path(project_root: Path) -> Path:
@@ -268,16 +263,31 @@ def stop_health_collector(project_root: Path) -> None:
     stop_path.parent.mkdir(parents=True, exist_ok=True)
     stop_path.write_text("stop\n", encoding="utf-8")
 
+
 def _write_mode(project_root: Path, state: str) -> None:
-    _write_json(project_root / "runtime" / "operations" / "mode.json", {"mode": "live", "status": state, "updated_at_utc": _now()})
+    _write_json(
+        project_root / "runtime" / "operations" / "mode.json",
+        {"mode": "live", "status": state, "updated_at_utc": _now()},
+    )
 
 
-def start_platform(project_root: Path, *, timeout_seconds: int = 300, start_streaming_job: bool = True) -> tuple[dict[str, Any], bool]:
+def start_platform(
+    project_root: Path, *, timeout_seconds: int = 300, start_streaming_job: bool = True
+) -> tuple[dict[str, Any], bool]:
     """Start Docker services and the single Spark streaming job from existing state."""
     _write_mode(project_root, "STARTING")
-    ok, output = run_compose( project_root, ["up", "-d"], timeout=timeout_seconds, )
+    ok, output = run_compose(
+        project_root,
+        ["up", "-d"],
+        timeout=timeout_seconds,
+    )
     if not ok:
-        payload = {"overall_status": "UNHEALTHY", "error": output[-700:] or "docker compose up failed", "captured_at_utc": _now(), "checks": []}
+        payload = {
+            "overall_status": "UNHEALTHY",
+            "error": output[-700:] or "docker compose up failed",
+            "captured_at_utc": _now(),
+            "checks": [],
+        }
         _write_json(project_root / "runtime" / "observability" / "latest.json", payload)
         return payload, False
     # Wait only for required infrastructure readiness. Pipeline evidence may still be
@@ -288,8 +298,11 @@ def start_platform(project_root: Path, *, timeout_seconds: int = 300, start_stre
     while time.monotonic() < deadline:
         snapshot, _ = collect_status(project_root, persist=True)
         service_failures = [
-            check for check in snapshot.get("checks", [])
-            if check.get("status") == "FAIL" and check.get("component") not in {"Spark streaming", "Latest validation", "Active serving build"}
+            check
+            for check in snapshot.get("checks", [])
+            if check.get("status") == "FAIL"
+            and check.get("component")
+            not in {"Spark streaming", "Latest validation", "Active serving build"}
         ]
         if not service_failures:
             ready = True
@@ -301,9 +314,11 @@ def start_platform(project_root: Path, *, timeout_seconds: int = 300, start_stre
 
     streaming_ok = True
     if start_streaming_job:
-        _, streaming_ok, _ = start_streaming(project_root, timeout_seconds=min(timeout_seconds, 150))
+        _, streaming_ok, _ = start_streaming(
+            project_root, timeout_seconds=min(timeout_seconds, 150)
+        )
     start_health_collector(project_root)
-    _write_mode(project_root, "RUNNING" if streaming_ok else "DEGRADED")
+    _write_mode(project_root, "RUNNING" if streaming_ok else "ATTENTION")
 
     final_snapshot, final_status_ok = collect_status(
         project_root,
@@ -311,4 +326,3 @@ def start_platform(project_root: Path, *, timeout_seconds: int = 300, start_stre
     )
 
     return final_snapshot, final_status_ok and streaming_ok
-

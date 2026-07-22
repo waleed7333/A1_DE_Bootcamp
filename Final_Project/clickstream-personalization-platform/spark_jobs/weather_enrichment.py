@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fetch missing Open-Meteo historical weather coverage for clean clickstream events.
 
-The job keeps the project reliable during local demos:
+The job keeps the project reliable during local first-run executions:
 - It requests Open-Meteo once per location/date-range, not once per event hour.
 - It uses a short HTTP timeout so an external API cannot block init for a long time.
 - Missing weather values remain NULL.
@@ -18,7 +18,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import requests
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 CATALOG = "ecommerce"
 API_URL = "https://archive-api.open-meteo.com/v1/archive"
@@ -26,9 +27,7 @@ REQUEST_TIMEOUT_SECONDS = 8
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Enrich Clickstream with historical weather"
-    )
+    parser = argparse.ArgumentParser(description="Enrich Clickstream with historical weather")
     parser.add_argument("--run-id", required=True)
     return parser.parse_args()
 
@@ -159,6 +158,74 @@ def _failure_row(
     )
 
 
+WEATHER_RESULT_SCHEMA = (
+    "weather_key string, "
+    "latitude double, "
+    "longitude double, "
+    "weather_hour timestamp, "
+    "temperature_c double, "
+    "precipitation_mm double, "
+    "weather_code int, "
+    "weather_condition string, "
+    "coverage_status string, "
+    "fetched_at timestamp"
+)
+
+
+def write_weather_updates(
+    spark: SparkSession,
+    rows: list[tuple[Any, ...]],
+) -> int:
+    """Upsert weather rows by weather_key so retry/backfill does not create duplicates."""
+    if not rows:
+        return 0
+
+    updates = spark.createDataFrame(rows, WEATHER_RESULT_SCHEMA)
+    updates.createOrReplaceTempView("weather_enrichment_updates")
+
+    spark.sql(f"""
+        MERGE INTO {CATALOG}.processed.weather_clean AS target
+        USING weather_enrichment_updates AS source
+        ON target.weather_key = source.weather_key
+        WHEN MATCHED THEN UPDATE SET
+            target.latitude = source.latitude,
+            target.longitude = source.longitude,
+            target.weather_hour = source.weather_hour,
+            target.temperature_c = source.temperature_c,
+            target.precipitation_mm = source.precipitation_mm,
+            target.weather_code = source.weather_code,
+            target.weather_condition = source.weather_condition,
+            target.coverage_status = source.coverage_status,
+            target.fetched_at = source.fetched_at
+        WHEN NOT MATCHED THEN INSERT (
+            weather_key,
+            latitude,
+            longitude,
+            weather_hour,
+            temperature_c,
+            precipitation_mm,
+            weather_code,
+            weather_condition,
+            coverage_status,
+            fetched_at
+        )
+        VALUES (
+            source.weather_key,
+            source.latitude,
+            source.longitude,
+            source.weather_hour,
+            source.temperature_c,
+            source.precipitation_mm,
+            source.weather_code,
+            source.weather_condition,
+            source.coverage_status,
+            source.fetched_at
+        )
+        """)
+
+    return len(rows)
+
+
 def main() -> int:
     args = parse_args()
     spark: SparkSession | None = None
@@ -169,10 +236,7 @@ def main() -> int:
 
         source = (
             spark.table(f"{CATALOG}.processed.clickstream_clean")
-            .filter(
-                F.col("geo_latitude").isNotNull()
-                & F.col("geo_longitude").isNotNull()
-            )
+            .filter(F.col("geo_latitude").isNotNull() & F.col("geo_longitude").isNotNull())
             .select(
                 F.round("geo_latitude", 3).alias("latitude"),
                 F.round("geo_longitude", 3).alias("longitude"),
@@ -190,15 +254,21 @@ def main() -> int:
             )
         )
 
-        existing = (
+        existing_non_retryable = (
             spark.table(f"{CATALOG}.processed.weather_clean")
+            .filter(
+                (F.col("coverage_status") == F.lit("complete"))
+                | (
+                    (F.col("coverage_status") == F.lit("unavailable"))
+                    & (F.to_date("weather_hour") >= F.current_date())
+                )
+            )
             .select("weather_key")
             .distinct()
         )
 
         keys = (
-            source
-            .join(existing, "weather_key", "left_anti")
+            source.join(existing_non_retryable, "weather_key", "left_anti")
             .select("weather_key", "latitude", "longitude", "weather_hour")
             .orderBy("latitude", "longitude", "weather_hour")
         )
@@ -299,8 +369,7 @@ def main() -> int:
                                 request_key=weather_key,
                                 http_status=http_status,
                                 error_message=(
-                                    "Requested weather hour is missing from "
-                                    "Open-Meteo response"
+                                    "Requested weather hour is missing from " "Open-Meteo response"
                                 ),
                             )
                         )
@@ -351,22 +420,7 @@ def main() -> int:
                     )
                 )
 
-        if successful:
-            spark.createDataFrame(
-                successful,
-                (
-                    "weather_key string, "
-                    "latitude double, "
-                    "longitude double, "
-                    "weather_hour timestamp, "
-                    "temperature_c double, "
-                    "precipitation_mm double, "
-                    "weather_code int, "
-                    "weather_condition string, "
-                    "coverage_status string, "
-                    "fetched_at timestamp"
-                ),
-            ).writeTo(f"{CATALOG}.processed.weather_clean").append()
+        weather_rows_written = write_weather_updates(spark, successful)
 
         if failures:
             spark.createDataFrame(
@@ -389,7 +443,7 @@ def main() -> int:
                     "status": "PASSED",
                     "requested_keys": len(rows),
                     "location_requests": len(grouped),
-                    "weather_rows_written": len(successful),
+                    "weather_rows_written": weather_rows_written,
                     "failed_or_skipped_keys": len(failures),
                 },
                 sort_keys=True,

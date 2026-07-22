@@ -1,122 +1,296 @@
 # Project Architecture
 
-## 1. Purpose
+## Purpose
 
-This document defines the final architecture of the Clickstream Personalization Platform. It describes the service layout, processing paths, runtime boundaries, architectural decisions, and operational responsibilities of the platform components.
+**Clickstream Personalization Platform** implements an end-to-end data engineering architecture for behavioral analytics, user journey intelligence, contextual enrichment, personalization signals, and Power BI reporting.
 
-The architecture is designed to satisfy a complete data engineering workflow: heterogeneous source ingestion, streaming processing, scheduled batch processing, governed lakehouse storage, quality/audit evidence, serving publication, dashboard consumption, and operational monitoring.
-
----
-
-## 2. Business and Analytical Objective
-
-The platform supports e-commerce clickstream personalization and conversion intelligence. It combines user behavior, website request performance, product metadata, user profile changes, order transactions, order line items, GeoIP context, weather context, and holiday context into a single governed analytical platform.
-
-The architecture is intended to support these analytical outcomes:
-
-- Funnel leakage analysis from product view to add-to-cart to checkout start to checkout completion.
-- Journey and navigation analysis across sessions and page transitions.
-- Product engagement and conversion analysis.
-- Revenue and order analysis from transactional CDC sources.
-- Web experience analysis using HTTP status codes, endpoints, and response times.
-- Geographic analysis using GeoLite2 enrichment.
-- Context analysis using historical weather and holiday enrichment.
-- Personalization candidate discovery for products or segments with high interest and lower conversion.
-
----
-
-## 3. Architecture Principles
-
-| Principle | Implementation |
-|---|---|
-| Streaming and batch separation | Spark Structured Streaming processes Kafka topics continuously. Airflow triggers only scheduled Spark batch jobs. |
-| Lakehouse-first design | Raw, processed, and audit data are stored in Apache Iceberg tables on MinIO. |
-| Traceability | Raw Kafka payloads are preserved in `ecommerce.raw.kafka_messages` with topic, partition, offset, timestamp, and batch metadata. |
-| Explicit quality routing | Valid records go to `ecommerce.processed.*`; invalid and duplicate records go to `ecommerce.audit.quarantine_records`. |
-| CDC preservation | Debezium CDC metadata such as operation type, before image, after image, source LSN, source timestamp, and Kafka metadata is preserved in clean CDC tables. |
-| Controlled SCD2 | User Profile SCD Type 2 is built by a Spark batch job from cleaned user CDC events. |
-| Serving isolation | ClickHouse receives validated, dashboard-ready dimensions, facts, and marts. Power BI reads ClickHouse `v_*` views only. |
-| Operational evidence | Pipeline runs, quality metrics, validation runs, serving builds, watermarks, and API failures are stored for proof and troubleshooting. |
-| Local reproducibility | Docker Compose runs the full platform locally with explicit service definitions and resource limits. |
-| Read-only monitoring | The Streamlit Operations Console reads evidence and status; it does not perform destructive operations. |
-
----
-
-## 4. High-Level Architecture
-
-The platform is organized into the following layers:
+The platform is organized around a clear separation of responsibilities:
 
 ```text
-Sources
-  ↓
-Ingestion
-  ↓
-Spark Processing
-  ↓
-Apache Iceberg Lakehouse on MinIO
-  ↓
-Validation and Serving Publication
-  ↓
-ClickHouse OLAP Serving Layer
-  ↓
+Source systems
+  → Ingestion services
+  → Streaming and batch processing
+  → Iceberg lakehouse storage
+  → ClickHouse serving layer
+  → Power BI dashboard
+  → Operations and validation evidence
+```
+
+This architecture is designed to keep raw ingestion, data cleaning, enrichment, quality validation, analytical serving, and business reporting independent from each other. Each layer has a defined responsibility and a stable contract with the next layer.
+
+---
+
+## Architecture Overview
+
+![Architecture Overview](../diagrams/01_architecture_overview.png)
+
+The platform integrates behavioral, operational, transactional, reference, and contextual data sources into a local containerized data platform.
+
+The high-level flow is:
+
+```text
+Clickstream Events
+Web Server Logs
+PostgreSQL CDC
+Product Catalog
+GeoIP Database
+Weather API
+Holiday API
+        ↓
+Kafka / Debezium / Filebeat / Spark Batch
+        ↓
+Spark Structured Streaming + Spark Batch
+        ↓
+Apache Iceberg on MinIO
+        ↓
+ClickHouse Serving Layer
+        ↓
 Power BI Dashboard
 ```
 
-The platform contains two major compute paths:
-
-1. **Continuous streaming path** for clickstream, web logs, and PostgreSQL CDC.
-2. **Scheduled batch path** for User SCD2, weather enrichment, holiday enrichment, lakehouse validation, and ClickHouse serving publication.
+The architecture separates continuous ingestion from scheduled analytical refreshes. Streaming jobs process high-frequency Kafka topics into the lakehouse, while Airflow-triggered batch jobs build slowly changing dimensions, contextual enrichments, validation evidence, and serving outputs.
 
 ---
 
-## 5. Core Services
+## Platform Layers
 
-| Service | Container / component | Architectural responsibility |
+| Layer | Responsibility | Main Components |
 |---|---|---|
-| PostgreSQL | `clickstream-postgres` | Source database for users, orders, and order items; logical replication source for Debezium; JDBC catalog backend for Iceberg metadata. |
-| ZooKeeper | `clickstream-zookeeper` | Coordination service for the Confluent Kafka 7.3.2 cluster. |
-| Kafka brokers | `clickstream-kafka1`, `clickstream-kafka2`, `clickstream-kafka3` | Distributed streaming backbone with three brokers, replication factor 3, partitions 3, and min ISR 2. |
-| Kafka UI | `clickstream-kafka-ui` | Topic and partition inspection UI for validation evidence. |
-| Debezium Connect | `clickstream-debezium-connect` | Captures PostgreSQL snapshots and CDC changes into Kafka topics. |
-| MinIO | `clickstream-minio` | S3-compatible object store for the Iceberg warehouse bucket. |
-| Filebeat | `clickstream-filebeat` | Tails structured `.log` web logs and publishes them to Kafka. |
-| Spark Engine | `clickstream-spark-engine` | Single Spark container for Structured Streaming and all Spark batch jobs. |
-| Airflow | `clickstream-airflow` | Schedules and monitors the batch refresh DAG. |
-| ClickHouse | `clickstream-clickhouse` | OLAP serving layer for Power BI. |
-| Observability UI | `clickstream-observability-ui` | Read-only Streamlit console for platform status and evidence. |
-| Power BI | `powerBI/project_clickstream.pbix` | Final dashboard and semantic visualization layer. |
+| Source Layer | Generates and stores source data before ingestion. | Local JSONL generators, `.log` web logs, PostgreSQL, CSV reference data, GeoIP database, external APIs |
+| Ingestion Layer | Moves source records into streaming or batch processing paths. | Kafka, Filebeat, Debezium Connect, Spark batch loaders |
+| Processing Layer | Validates, cleans, enriches, deduplicates, and structures data. | Spark Structured Streaming, Spark Batch |
+| Lakehouse Layer | Stores raw, processed, quarantine, and audit data in table format. | Apache Iceberg, MinIO, PostgreSQL Iceberg catalog |
+| Orchestration Layer | Coordinates scheduled analytical jobs. | Apache Airflow |
+| Serving Layer | Publishes dashboard-ready analytical data. | ClickHouse |
+| Analytics Layer | Presents business metrics and analytical scenarios. | Power BI |
+| Operations Layer | Surfaces health, validation, and serving evidence. | Streamlit Operations Console, JSON reports, audit tables |
 
 ---
 
-## 6. Source Layer
+## Source Layer
 
-The source layer contains multiple heterogeneous source types:
+The project integrates multiple source categories to represent a realistic e-commerce analytics environment.
 
-- Clickstream JSONL events.
-- Web server structured `.log` records.
-- Static product catalog CSV.
-- PostgreSQL `users`, `orders`, and `order_items` tables.
-- MaxMind GeoLite2 City local reference database.
-- Open-Meteo Historical Weather API.
-- Calendarific Holiday API.
+| Source | Type | Role |
+|---|---|---|
+| Clickstream Events | Behavioral event stream | Captures user activity such as page views, product views, cart events, search, checkout, login, logout, and scroll behavior. |
+| Web Server Logs | Operational request logs | Captures HTTP request paths, methods, status codes, latency, request IDs, user agents, and IP addresses. |
+| Product Catalog | Static reference CSV | Provides product attributes such as product ID, name, category, price, and inventory. |
+| PostgreSQL Users | Transactional source table | Stores user profile and account data. |
+| PostgreSQL Orders | Transactional source table | Stores order-level transactional records. |
+| PostgreSQL Order Items | Transactional source table | Stores product-level line items for orders. |
+| GeoIP Database | Local enrichment reference | Converts IP addresses into country, city, coordinate, and timezone context. |
+| Weather API | External context source | Provides weather observations for analytical context. |
+| Holiday API | External context source | Provides country-level holiday context for behavioral analysis. |
 
-The sources are intentionally varied to demonstrate different ingestion patterns: direct Kafka publishing, log shipping, static batch loading, CDC capture, local reference lookup, and scheduled API pulls.
+The architecture intentionally uses heterogeneous sources: file-based events, log shipping, relational CDC, reference CSV, local enrichment database, and scheduled external API pulls.
 
 ---
 
-## 7. Ingestion Layer
+## Ingestion Architecture
 
-### 7.1 Clickstream ingestion
+![Data Flow](../diagrams/02_data_flow.png)
 
-Clickstream events are generated into a JSONL source file and published directly to Kafka topic `clickstream-events`. This path represents application event publishing. It does not use Filebeat because clickstream records are application events rather than log records.
+The ingestion design uses two main patterns:
 
-### 7.2 Web log ingestion
+1. **Streaming ingestion**
+2. **Scheduled batch ingestion**
 
-Web server records are generated as structured `.log` lines under `data/source/web_logs/webserver_access.log`. Filebeat tails this file and publishes records to Kafka topic `webserver-logs`. This path represents realistic infrastructure log shipping.
+### Streaming Ingestion
 
-### 7.3 CDC ingestion
+Streaming ingestion is used for sources that behave like continuously arriving operational data.
 
-PostgreSQL tables are seeded first and then captured by Debezium Connect. Debezium writes CDC events into Kafka topics:
+| Source | Ingestion Path | Kafka Topic |
+|---|---|---|
+| Clickstream Events | Local publisher → Kafka | `clickstream-events` |
+| Web Server Logs | Filebeat → Kafka | `webserver-logs` |
+| Users CDC | PostgreSQL → Debezium → Kafka | `users-cdc` |
+| Orders CDC | PostgreSQL → Debezium → Kafka | `orders-cdc` |
+| Order Items CDC | PostgreSQL → Debezium → Kafka | `order-items-cdc` |
+
+Kafka acts as the streaming backbone between operational sources and Spark Structured Streaming.
+
+The Kafka deployment uses three brokers to model a resilient local streaming environment:
+
+```text
+kafka1
+kafka2
+kafka3
+```
+
+Business topics use partitioning and replication suitable for the local platform contract.
+
+### Scheduled Batch Ingestion
+
+Scheduled batch ingestion is used for reference and contextual data.
+
+| Source | Ingestion Path | Target |
+|---|---|---|
+| Product Catalog | Spark batch load | `ecommerce.processed.product_catalog_clean` |
+| GeoIP Database | Spark enrichment reference | Clickstream and web log enrichment |
+| Weather API | Airflow-triggered Spark batch | `ecommerce.processed.weather_clean` |
+| Holiday API | Airflow-triggered Spark batch | `ecommerce.processed.holidays_clean` |
+
+The product catalog is treated as a static reference source. It is loaded directly into the lakehouse and used by downstream serving jobs.
+
+---
+
+## Streaming Processing Architecture
+
+Spark Structured Streaming is responsible for processing Kafka topics into Iceberg tables.
+
+The streaming path handles:
+
+```text
+Kafka topics
+  → Raw payload preservation
+  → Parsing
+  → Validation
+  → Deduplication
+  → GeoIP enrichment
+  → CDC normalization
+  → Clean Iceberg tables
+  → Quarantine and audit tables
+```
+
+### Streaming Responsibilities
+
+| Responsibility | Description |
+|---|---|
+| Raw capture | Kafka messages are preserved in a unified raw Iceberg table with topic, partition, offset, key, value, and ingestion metadata. |
+| Schema parsing | JSON payloads are parsed into structured records according to the source contract. |
+| Validation | Required identifiers, event types, timestamps, and source-specific rules are checked before clean publication. |
+| Deduplication | Duplicate event records are identified and routed according to the quality model. |
+| Quarantine | Invalid or duplicate records are written to audit evidence instead of being silently discarded. |
+| GeoIP enrichment | IP-derived country, city, latitude, longitude, timezone, and location context are attached where available. |
+| CDC normalization | Debezium messages are transformed into clean CDC event tables. |
+| Metrics | Pipeline runs, watermarks, and quality metrics are recorded for operational evidence. |
+
+The streaming layer does not publish directly to Power BI. Its role is to maintain validated lakehouse tables that become the foundation for scheduled serving publication.
+
+---
+
+## Batch Processing Architecture
+
+Airflow coordinates scheduled Spark batch jobs through the `analytics_refresh` workflow.
+
+![Analytics Refresh Orchestration](../diagrams/06_analytics_refresh_orchestration.png)
+
+The analytical refresh includes:
+
+```text
+user_scd2
+weather_enrichment
+holiday_enrichment
+validate_lakehouse
+publish_serving
+```
+
+### Batch Job Responsibilities
+
+| Job | Responsibility |
+|---|---|
+| `user_scd2` | Builds the current and historical user profile dimension from clean user CDC events. |
+| `weather_enrichment` | Enriches observed location and hour combinations with weather context. |
+| `holiday_enrichment` | Enriches country and date combinations with holiday context. |
+| `validate_lakehouse` | Validates lakehouse quality, record reconciliation, relationships, and audit expectations. |
+| `publish_serving` | Publishes curated dimensions, facts, marts, and stable `v_*` views to ClickHouse. |
+
+The batch design separates operational ingestion from analytical publication. This keeps streaming focused on continuous ingestion and makes serving publication versioned, validated, and reproducible.
+
+---
+
+## Lakehouse Architecture
+
+![Lakehouse Zones](../diagrams/03_lakehouse_zones.png)
+
+Apache Iceberg provides the table layer for the lakehouse, while MinIO provides S3-compatible object storage.
+
+The Iceberg warehouse is organized around three logical zones:
+
+```text
+ecommerce.raw
+ecommerce.processed
+ecommerce.audit
+```
+
+### Raw Zone
+
+The raw zone preserves Kafka messages before source-specific transformations.
+
+| Table | Purpose |
+|---|---|
+| `raw.kafka_messages` | Unified raw landing table for Kafka messages from clickstream, web logs, and CDC topics. |
+
+The raw table supports lineage, replay analysis, offset-level tracing, and ingestion evidence.
+
+### Processed Zone
+
+The processed zone contains clean, validated, deduplicated, and enriched analytical tables.
+
+| Table | Purpose |
+|---|---|
+| `processed.product_catalog_clean` | Static product reference table. |
+| `processed.clickstream_clean` | Validated and enriched behavioral event table. |
+| `processed.webserver_logs_clean` | Validated and enriched web request table. |
+| `processed.users_cdc_clean` | Clean Debezium CDC event history for users. |
+| `processed.orders_cdc_clean` | Clean Debezium CDC event history for orders. |
+| `processed.order_items_cdc_clean` | Clean Debezium CDC event history for order items. |
+| `processed.user_profile_scd2` | SCD Type 2 user profile dimension. |
+| `processed.weather_clean` | Weather context table. |
+| `processed.holidays_clean` | Holiday context table. |
+
+### Audit Zone
+
+The audit zone contains operational and validation evidence.
+
+| Table | Purpose |
+|---|---|
+| `audit.pipeline_runs` | Pipeline run records and execution status. |
+| `audit.quality_metrics` | Accepted, rejected, duplicate, and processed record metrics. |
+| `audit.external_api_failures` | External API failure records and retry evidence. |
+| `audit.validation_runs` | Lakehouse validation results. |
+| `audit.serving_builds` | Serving build history and activation evidence. |
+| `audit.watermarks` | Streaming and batch watermark tracking. |
+| `audit.quarantine_records` | Invalid and duplicate record evidence. |
+
+---
+
+## Storage and Table Design
+
+The lakehouse uses Iceberg tables with partitioning aligned to analytical access patterns.
+
+| Table | Partition Strategy |
+|---|---|
+| `raw.kafka_messages` | `days(ingested_at), source_name` |
+| `processed.product_catalog_clean` | `category` |
+| `processed.clickstream_clean` | `days(event_timestamp)` |
+| `processed.webserver_logs_clean` | `days(log_timestamp)` |
+| `processed.users_cdc_clean` | `days(processed_at)` |
+| `processed.orders_cdc_clean` | `days(processed_at)` |
+| `processed.order_items_cdc_clean` | `days(processed_at)` |
+| `processed.user_profile_scd2` | `days(effective_from)` |
+| `processed.weather_clean` | `days(weather_hour)` |
+| `processed.holidays_clean` | `year` |
+| `audit.pipeline_runs` | `days(recorded_at)` |
+| `audit.quality_metrics` | `days(recorded_at)` |
+| `audit.quarantine_records` | `days(quarantined_at), source_name` |
+| `audit.external_api_failures` | `days(occurred_at)` |
+| `audit.watermarks` | `days(updated_at)` |
+| `audit.validation_runs` | `days(created_at)` |
+| `audit.serving_builds` | `days(created_at)` |
+
+The lakehouse design combines structured table management, partition pruning, Parquet storage, compression, and auditability.
+
+---
+
+## CDC and SCD Type 2 Architecture
+
+![CDC and SCD2 Flow](../diagrams/04_cdc_scd2_flow.png)
+
+PostgreSQL transactional tables are captured through Debezium and delivered to Kafka as CDC streams.
+
+CDC topics:
 
 ```text
 users-cdc
@@ -124,202 +298,240 @@ orders-cdc
 order-items-cdc
 ```
 
-CDC messages include operation type and source metadata needed for downstream processing.
+The architecture distinguishes between clean CDC event history and analytical dimensional history.
 
-### 7.4 Static reference ingestion
-
-Product Catalog is loaded once from `data/reference/product_catalog.csv` into the clean Iceberg table `ecommerce.processed.product_catalog_clean`. It is static by design and is not represented as a CDC stream.
-
-### 7.5 External context ingestion
-
-Open-Meteo and Calendarific are not streamed. They are pulled by scheduled Spark batch jobs after clean clickstream data provides the required geographic, date, and hour keys.
-
----
-
-## 8. Spark Processing Layer
-
-Spark is the only data processing engine in the project.
-
-### 8.1 Spark Structured Streaming responsibilities
-
-Spark Structured Streaming continuously consumes Kafka topics and performs:
-
-- JSON parsing.
-- Contract version validation.
-- Required-key validation.
-- Event-type validation.
-- Product-event validation.
-- Checkout-event validation.
-- CDC payload validation.
-- Deduplication.
-- Kafka metadata preservation.
-- Raw payload persistence.
-- GeoIP enrichment from the local GeoLite2 database.
-- Late-arrival flagging.
-- Quarantine routing.
-- Clean Iceberg table writes.
-
-### 8.2 Spark Batch responsibilities
-
-Spark batch jobs perform:
-
-- Product Catalog bootstrap.
-- User SCD Type 2 construction.
-- Weather enrichment.
-- Holiday enrichment.
-- Lakehouse validation.
-- ClickHouse serving publication.
-- Audit/evidence output generation.
-
----
-
-## 9. Lakehouse Layer
-
-The lakehouse is implemented using Apache Iceberg on top of MinIO object storage.
-
-Iceberg catalog name:
-
-```text
-ecommerce
-```
-
-MinIO bucket:
-
-```text
-ecommerce-lakehouse
-```
-
-Warehouse path:
-
-```text
-s3://ecommerce-lakehouse/warehouse
-```
-
-The lakehouse is organized into three namespaces:
-
-| Namespace | Purpose |
+| Table | Role |
 |---|---|
-| `ecommerce.raw` | Raw Kafka payload preservation. |
-| `ecommerce.processed` | Clean, structured, enriched data. |
-| `ecommerce.audit` | Quality, quarantine, validation, serving, API, and watermark evidence. |
+| `users_cdc_clean` | Clean CDC event history for user changes. |
+| `orders_cdc_clean` | Clean CDC event history for order changes. |
+| `order_items_cdc_clean` | Clean CDC event history for order-item changes. |
+| `user_profile_scd2` | Analytical user profile dimension with current and historical versions. |
 
----
+SCD Type 2 is applied to user profile data because user attributes can change over time and historical analysis requires the correct user state at the time of activity.
 
-## 10. Airflow Scope
-
-Airflow orchestrates only scheduled batch processing. It does not run or control Spark Structured Streaming.
-
-Airflow DAG:
+The SCD2 dimension maintains:
 
 ```text
-analytics_refresh
+effective_from
+effective_to
+is_current
+source_lsn
+source_ts_ms
 ```
 
-Batch sequence:
+This design preserves CDC lineage while providing a clean current-user dimension for serving and reporting.
+
+---
+
+## Data Quality Architecture
+
+![Data Quality and Audit Reconciliation](../diagrams/07_data_quality_audit_reconciliation.png)
+
+Data quality is implemented as part of the pipeline, not as a separate afterthought.
+
+The quality model follows this reconciliation contract:
 
 ```text
-user_scd2
-  ↓
-weather_enrichment
-  ↓
-holiday_enrichment
-  ↓
-validate_lakehouse
-  ↓
-publish_serving
+Input records = Accepted records + Rejected records + Duplicate records
 ```
 
-This separation prevents the common architecture mistake of treating Airflow as the controller for all Spark workloads. The streaming job is a continuously running ingestion process; Airflow is used for scheduled analytics refresh tasks.
+### Quality Responsibilities
+
+| Area | Description |
+|---|---|
+| Required identifiers | Ensures key fields such as event ID, session ID, event type, request ID, and source-specific identifiers are present. |
+| Event rules | Enforces event-specific requirements such as product IDs for product events and checkout IDs for checkout events. |
+| CDC structure | Validates CDC envelopes and normalizes source metadata. |
+| Deduplication | Detects duplicate source records and records evidence. |
+| Quarantine | Stores invalid and duplicate records with reason codes. |
+| Metrics | Records accepted, rejected, duplicate, and processed counts. |
+| Validation | Checks lakehouse consistency, relationship coverage, SCD2 state, and serving readiness. |
+
+The audit model makes pipeline behavior explainable and verifiable through structured evidence tables.
 
 ---
 
-## 11. Serving Layer
+## Serving Architecture
 
-ClickHouse is the OLAP serving layer. It stores dashboard-ready physical tables and exposes `v_*` views for Power BI.
+![ClickHouse OLAP Model](../diagrams/05_clickhouse_olap_model.png)
 
-The serving publication job reads validated Iceberg tables, builds dimensions, facts, and marts, writes them into ClickHouse, and registers the active serving build.
+ClickHouse is the analytical serving layer for Power BI.
 
-Power BI does not read directly from Kafka, PostgreSQL, MinIO, Iceberg raw tables, or audit tables. It reads ClickHouse `v_*` views only.
+The serving database is:
+
+```text
+personalization_olap
+```
+
+Spark publishes physical dimensions, facts, and marts into ClickHouse. Stable `v_*` views expose the latest active serving build to Power BI.
+
+### Serving View Contract
+
+| Category | Views |
+|---|---|
+| Dimensions | `v_dim_date`, `v_dim_product`, `v_dim_user_current` |
+| Facts | `v_fact_clickstream_event`, `v_fact_order`, `v_fact_order_item` |
+| Journey Marts | `v_mart_journey_session`, `v_mart_navigation_paths` |
+| Product and Experience Marts | `v_mart_product_performance_daily`, `v_mart_web_experience_daily` |
+| Context and Personalization Marts | `v_mart_context_impact_daily`, `v_mart_personalization_candidates` |
+
+The serving layer intentionally exposes twelve curated views. These views form the analytical contract consumed by Power BI.
 
 ---
 
-## 12. Operations Layer
+## Power BI Architecture
 
-The Operations Console is a Streamlit application. It provides read-only visibility into:
+Power BI connects to ClickHouse in Import mode and reads the curated `v_*` serving views.
 
-- Service health.
-- Runtime evidence.
-- Report files.
-- ClickHouse serving status.
-- Kafka and ingestion status.
-- Batch and validation status.
-- Quality and quarantine evidence.
+```text
+ClickHouse v_* views
+        ↓
+Power BI Import model
+        ↓
+DAX measures and semantic modeling
+        ↓
+Business dashboard pages
+```
 
-It is intentionally read-only and does not reset, stop, or mutate infrastructure.
+Dashboard-specific calculations, ratios, funnel metrics, and presentation-level measures are implemented in Power BI. ClickHouse remains the clean serving contract and does not expose raw, audit, or internal operational tables to the report.
+
+The Power BI file is stored at:
+
+```text
+power_BI_dashboard/project_clickstream.pbix
+```
+
+Dashboard evidence is stored under:
+
+```text
+screenshots/
+```
 
 ---
 
-## 13. Runtime Modes
+## Operations Architecture
 
-The project supports practical runtime modes through `main.py` commands:
+The platform includes operational visibility through CLI reports, JSON evidence files, audit tables, and a Streamlit Operations Console.
+
+The Operations Console summarizes:
+
+```text
+Docker service health
+Kafka and CDC state
+Spark streaming status
+Iceberg table evidence
+Data quality status
+SCD Type 2 status
+Batch enrichment status
+ClickHouse serving readiness
+Power BI view availability
+```
+
+This layer is read-only and provides operational evidence without modifying data.
+
+---
+
+## Business Key Architecture
+
+![Business Key Relationships](../diagrams/08_business_key_relationships.png)
+
+The architecture relies on stable business keys to connect behavioral, operational, transactional, contextual, and reference data.
+
+| Key | Role |
+|---|---|
+| `event_id` | Unique clickstream event identifier. |
+| `request_id` | Links clickstream activity with web server logs. |
+| `session_id` | Groups user activity into journeys. |
+| `visitor_id` | Tracks visitor behavior before or alongside known user identification. |
+| `user_id` | Links users, sessions, orders, and profile history. |
+| `checkout_id` | Connects checkout activity with order records. |
+| `order_id` | Links orders and order items. |
+| `product_id` | Connects product events, order items, product catalog, and product marts. |
+| `event_timestamp` | Supports event ordering, date dimensions, and time-based analysis. |
+
+These relationships allow the serving layer to support journey, funnel, revenue, product, personalization, and context analytics.
+
+---
+
+## Bronze, Silver, and Gold Model
+
+![Bronze Silver Gold Flow](../diagrams/09_bronze_silver_gold_flow.png)
+
+The project follows a lakehouse-style progression:
+
+| Layer | Project Mapping | Purpose |
+|---|---|---|
+| Bronze | `ecommerce.raw` | Preserve raw Kafka messages and ingestion metadata. |
+| Silver | `ecommerce.processed` | Store clean, validated, enriched, and structured analytical data. |
+| Gold | ClickHouse serving layer | Publish dashboard-ready dimensions, facts, marts, and stable views. |
+| Consumption | Power BI | Present business-facing analytics and decision reporting. |
+
+Power BI is the consumption layer, while ClickHouse acts as the governed analytical serving layer.
+
+---
+
+## Deployment Topology
+
+The platform runs as a local Docker Compose environment.
+
+Core services include:
+
+| Service | Role |
+|---|---|
+| `postgres` | Transactional source system and Iceberg JDBC catalog backend. |
+| `zookeeper` | Kafka coordination. |
+| `kafka1`, `kafka2`, `kafka3` | Kafka broker cluster. |
+| `kafka-ui` | Kafka topic and consumer visibility. |
+| `debezium` | CDC connector runtime. |
+| `minio` | Object storage for the Iceberg warehouse. |
+| `filebeat` | Web server log shipper. |
+| `spark-engine` | Spark runtime for streaming and batch jobs. |
+| `airflow` | Batch orchestration. |
+| `clickhouse` | OLAP serving database. |
+| `observability-ui` | Streamlit Operations Console. |
+
+The environment is controlled through:
+
+```text
+main.py
+docker-compose.yml
+config/
+spark_jobs/
+src/platform_core/
+```
+
+---
+
+## Run Lifecycle
+
+The platform supports a structured lifecycle through the main CLI.
 
 | Command | Purpose |
 |---|---|
-| `python main.py init` | Build the platform from a clean state and run the initial setup sequence. |
-| `python main.py start` | Start an existing platform without deleting data. |
-| `python main.py status` | Print health and evidence status. |
-| `python main.py stop` | Stop containers without deleting dynamic data. |
-| `python main.py reset --confirm` | Delete dynamic state and rebuild when explicitly confirmed. |
+| `python main.py init` | Creates a clean first-run platform state, initializes services, loads sources, starts streaming, applies controlled CDC mutations, validates the lakehouse, and publishes serving outputs. |
+| `python main.py start` | Starts an existing preserved local platform state. |
+| `python main.py status` | Reports service health, streaming state, validation state, and active serving build. |
+| `python main.py stop` | Stops containers while preserving local project state. |
+| `python main.py reset --confirm` | Removes generated runtime state and returns the project to a clean first-run state. |
 
-The CLI deliberately exposes a small set of normal operator commands. Internal Spark jobs are not intended to be the primary user-facing CLI.
-
----
-
-## 14. Architecture Diagrams
-
-The primary diagrams are stored under `diagrams/`:
-
-| Diagram | Purpose |
-|---|---|
-| `diagrams/01_architecture_overview.png` | Complete end-to-end platform overview. |
-| `diagrams/02_data_flow.png` | Main data flow through streaming, CDC, batch, lakehouse, serving, and Power BI. |
-| `diagrams/03_lakehouse_zones.png` | Raw, processed, audit, quarantine, and serving zones. |
-| `diagrams/04_cdc_scd2_flow.png` | PostgreSQL CDC and User SCD2 processing. |
-| `diagrams/05_clickhouse_olap_model.png` | ClickHouse dimensional, fact, and mart model. |
-| `diagrams/06_analytics_refresh_orchestration.png` | Airflow batch refresh sequence. |
-| `diagrams/07_data_quality_audit_reconciliation.png` | Validation, quarantine, metrics, and reconciliation flow. |
-| `diagrams/08_business_key_relationships.png` | Business key relationships across sources. |
-| `diagrams/09_bronze_silver_gold_flow.png` | Logical Bronze/Silver/Gold data flow. |
-
-The README provides a more detailed explanation of what each diagram shows and what project decision it represents.
+This lifecycle keeps first-run initialization, ongoing startup, status inspection, shutdown, and reset behavior explicit.
 
 ---
 
-## 15. Key Architecture Decisions
+## Final Architecture Contract
 
-| Decision | Reason |
-|---|---|
-| Use Kafka for streaming input | Provides topic-based decoupling, partitions, offsets, replay ability, and CDC integration. |
-| Use three Kafka brokers | Demonstrates replicated streaming infrastructure rather than a single local broker. |
-| Use Filebeat for web logs | Represents realistic log shipping and separates web logs from application clickstream events. |
-| Use Debezium for CDC | Provides reliable change capture with before/after images and LSN metadata. |
-| Use one Spark container | Reduces local resource usage while still demonstrating Spark Structured Streaming and Spark batch jobs. |
-| Use Iceberg on MinIO | Provides lakehouse table management on object storage with a local S3-compatible environment. |
-| Use Airflow only for batch | Keeps streaming independent and uses orchestration where scheduled sequencing is useful. |
-| Use ClickHouse for serving | Provides fast OLAP queries and keeps Power BI away from raw lakehouse logic. |
-| Use `v_*` ClickHouse views | Ensures Power BI reads only the latest active serving build. |
-| Use audit/quarantine tables | Makes data quality handling explicit and provable. |
+The final project architecture is defined by the following contract:
 
----
+```text
+Heterogeneous sources
+  → Kafka / Filebeat / Debezium / Spark batch ingestion
+  → Spark Structured Streaming and Spark Batch
+  → Apache Iceberg lakehouse on MinIO
+  → ClickHouse physical serving tables
+  → Twelve stable ClickHouse v_* views
+  → Power BI Import dashboard
+```
 
-## 16. Architecture Risks and Controls
+The project keeps raw data, processed data, audit evidence, serving data, and dashboard presentation responsibilities separated.
 
-| Risk | Control |
-|---|---|
-| Local machine memory pressure | Low-memory service limits, one Spark container, Airflow parallelism set to one, recommended Docker memory documented. |
-| Dirty or malformed source records | Validation rules and quarantine records with reason codes. |
-| Duplicate source records | Deduplication and duplicate quarantine routing. |
-| CDC state ambiguity | Debezium metadata and SCD2 watermarks preserve ordering evidence. |
-| External API current-day gaps | Open-Meteo current/future timestamps are intentionally skipped and recorded in `external_api_failures` with status `SKIPPED`. |
-| Serving stale data | ClickHouse serving builds and validation reports show which validated snapshot was published. |
-| Dashboard reading the wrong layer | Power BI is documented and modeled to use ClickHouse `v_*` views only. |
+The Power BI layer consumes curated ClickHouse views only. Dashboard-specific calculations are implemented in Power BI, while ClickHouse remains the stable analytical serving interface.

@@ -8,10 +8,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from platform_core.config import load_settings, read_dotenv
-
 
 PLACEHOLDER_MARKERS = ("CHANGE_ME", "REPLACE_ME", "YOUR_", "<", ">")
 
@@ -66,7 +64,9 @@ def _check_python() -> CheckResult:
     current = sys.version_info[:3]
     if current >= minimum:
         return CheckResult("PASS", "Python version", f"{platform.python_version()} (minimum: 3.11)")
-    return CheckResult("FAIL", "Python version", f"{platform.python_version()} is below the 3.11 minimum")
+    return CheckResult(
+        "FAIL", "Python version", f"{platform.python_version()} is below the 3.11 minimum"
+    )
 
 
 def _check_file(project_root: Path, relative_path: str, required: bool = True) -> CheckResult:
@@ -100,7 +100,9 @@ def _check_single_spark(settings: dict) -> CheckResult:
     spark_entries = [name for name in memory if "spark" in name]
     if spark_entries == ["spark_engine"]:
         return CheckResult("PASS", "Spark topology", "One spark-engine container is configured")
-    return CheckResult("FAIL", "Spark topology", f"Expected only spark_engine, found: {spark_entries}")
+    return CheckResult(
+        "FAIL", "Spark topology", f"Expected only spark_engine, found: {spark_entries}"
+    )
 
 
 def _check_kafka_topology(settings: dict) -> CheckResult:
@@ -113,7 +115,11 @@ def _check_kafka_topology(settings: dict) -> CheckResult:
     )
     if okay:
         return CheckResult("PASS", "Kafka topology", "3 partitions, RF=3, min ISR=2")
-    return CheckResult("FAIL", "Kafka topology", "Expected partitions=3, replication_factor=3, min_insync_replicas=2")
+    return CheckResult(
+        "FAIL",
+        "Kafka topology",
+        "Expected partitions=3, replication_factor=3, min_insync_replicas=2",
+    )
 
 
 def _check_reference_assets(project_root: Path, settings: dict, strict: bool) -> list[CheckResult]:
@@ -124,11 +130,15 @@ def _check_reference_assets(project_root: Path, settings: dict, strict: bool) ->
     geoip = project_root / paths["geoip_database"]
 
     catalog_status = "PASS" if catalog.is_file() else ("FAIL" if strict else "WARN")
-    catalog_detail = "Found" if catalog.is_file() else "Created once in Source Generation, then remains static"
+    catalog_detail = (
+        "Found" if catalog.is_file() else "Created once in Source Generation, then remains static"
+    )
     results.append(CheckResult(catalog_status, "Reference product catalog", catalog_detail))
 
     geoip_status = "PASS" if geoip.is_file() else ("FAIL" if strict else "WARN")
-    geoip_detail = "Found" if geoip.is_file() else "Place GeoLite2-City.mmdb in data/reference before init"
+    geoip_detail = (
+        "Found" if geoip.is_file() else "Place GeoLite2-City.mmdb in data/reference before init"
+    )
     results.append(CheckResult(geoip_status, "GeoLite2 database", geoip_detail))
     return results
 
@@ -161,14 +171,22 @@ def _check_docker(settings: dict, offline: bool) -> list[CheckResult]:
         return [CheckResult("FAIL", "Docker CLI", "docker command was not found on PATH")]
 
     ok, output = _command_output(["docker", "--version"])
-    results.append(CheckResult("PASS" if ok else "FAIL", "Docker CLI", output or "Unable to read version"))
+    results.append(
+        CheckResult("PASS" if ok else "FAIL", "Docker CLI", output or "Unable to read version")
+    )
 
     ok, output = _command_output(["docker", "compose", "version"])
-    results.append(CheckResult("PASS" if ok else "FAIL", "Docker Compose", output or "Compose plugin is unavailable"))
+    results.append(
+        CheckResult(
+            "PASS" if ok else "FAIL", "Docker Compose", output or "Compose plugin is unavailable"
+        )
+    )
 
     ok, output = _command_output(["docker", "info", "--format", "{{.MemTotal}}"])
     if not ok:
-        results.append(CheckResult("FAIL", "Docker daemon", output or "Docker daemon is not reachable"))
+        results.append(
+            CheckResult("FAIL", "Docker daemon", output or "Docker daemon is not reachable")
+        )
         return results
 
     try:
@@ -188,7 +206,9 @@ def _check_docker(settings: dict, offline: bool) -> list[CheckResult]:
     return results
 
 
-def run_doctor(project_root: Path, *, strict: bool, offline: bool) -> tuple[list[CheckResult], bool]:
+def run_doctor(
+    project_root: Path, *, strict: bool, offline: bool
+) -> tuple[list[CheckResult], bool]:
     """Run environment checks and return results plus an overall pass flag."""
     results: list[CheckResult] = [_check_python()]
 

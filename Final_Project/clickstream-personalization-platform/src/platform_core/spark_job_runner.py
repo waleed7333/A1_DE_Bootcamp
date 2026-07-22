@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 import traceback
 from datetime import UTC, datetime
@@ -30,11 +29,26 @@ POLL_SECONDS = 2
 # Keep the runner deliberately narrow. Adding a new Batch pipeline requires an
 # explicit job specification here rather than permitting arbitrary command input.
 JOB_SPECS: dict[str, dict[str, Any]] = {
-    "user_scd2": {"script": "/opt/project/spark_jobs/user_scd2_incremental.py", "timeout_seconds": 360},
-    "weather_enrichment": {"script": "/opt/project/spark_jobs/weather_enrichment.py", "timeout_seconds": 420},
-    "holiday_enrichment": {"script": "/opt/project/spark_jobs/holiday_enrichment.py", "timeout_seconds": 420},
-    "validate_lakehouse": {"script": "/opt/project/spark_jobs/validate_lakehouse.py", "timeout_seconds": 420},
-    "publish_serving": {"script": "/opt/project/spark_jobs/publish_clickhouse.py", "timeout_seconds": 600},
+    "user_scd2": {
+        "script": "/opt/project/spark_jobs/user_scd2_incremental.py",
+        "timeout_seconds": 360,
+    },
+    "weather_enrichment": {
+        "script": "/opt/project/spark_jobs/weather_enrichment.py",
+        "timeout_seconds": 420,
+    },
+    "holiday_enrichment": {
+        "script": "/opt/project/spark_jobs/holiday_enrichment.py",
+        "timeout_seconds": 420,
+    },
+    "validate_lakehouse": {
+        "script": "/opt/project/spark_jobs/validate_lakehouse.py",
+        "timeout_seconds": 420,
+    },
+    "publish_serving": {
+        "script": "/opt/project/spark_jobs/publish_clickhouse.py",
+        "timeout_seconds": 600,
+    },
 }
 
 
@@ -72,7 +86,9 @@ def make_dirs() -> None:
             pass
 
 
-def write_heartbeat(*, status: str, active_request_id: str | None = None, detail: str | None = None) -> None:
+def write_heartbeat(
+    *, status: str, active_request_id: str | None = None, detail: str | None = None
+) -> None:
     """Write a fresh liveness signal consumed by Batch Processing preflight."""
     write_json(
         STATUS_PATH,
@@ -173,18 +189,30 @@ def process_request(path: Path) -> None:
         if not script.is_file():
             raise FileNotFoundError(f"missing batch job script: {script}")
 
-        write_heartbeat(status="RUNNING", active_request_id=request_id, detail=f"job={job_name}; run_id={run_id}")
+        write_heartbeat(
+            status="RUNNING",
+            active_request_id=request_id,
+            detail=f"job={job_name}; run_id={run_id}",
+        )
         command = [
             "/usr/local/spark/bin/spark-submit",
-            "--master", "local[1]",
-            "--driver-memory", "768m",
-            "--conf", "spark.executor.memory=768m",
-            "--conf", "spark.sql.shuffle.partitions=1",
-            "--conf", "spark.default.parallelism=1",
-            "--conf", "spark.sql.adaptive.enabled=false",
-            "--conf", "spark.sql.session.timeZone=UTC",
+            "--master",
+            "local[1]",
+            "--driver-memory",
+            "768m",
+            "--conf",
+            "spark.executor.memory=768m",
+            "--conf",
+            "spark.sql.shuffle.partitions=1",
+            "--conf",
+            "spark.default.parallelism=1",
+            "--conf",
+            "spark.sql.adaptive.enabled=false",
+            "--conf",
+            "spark.sql.session.timeZone=UTC",
             str(script),
-            "--run-id", run_id,
+            "--run-id",
+            run_id,
         ]
         with log_path.open("w", encoding="utf-8") as log_handle:
             completed = subprocess.run(
@@ -199,10 +227,15 @@ def process_request(path: Path) -> None:
         if completed.returncode != 0:
             tail = ""
             try:
-                tail = " | ".join(log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:])
+                tail = " | ".join(
+                    log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-12:]
+                )
             except OSError:
                 pass
-            raise RuntimeError(f"Spark batch exited {completed.returncode}; see {log_path}" + (f"; tail={tail[-800:]}" if tail else ""))
+            raise RuntimeError(
+                f"Spark batch exited {completed.returncode}; see {log_path}"
+                + (f"; tail={tail[-800:]}" if tail else "")
+            )
 
         result = _result_payload(
             request_id=request_id,

@@ -62,7 +62,8 @@ def test_documentation_files_and_assets_exist() -> None:
         "docs/02_DATA_SOURCES_AND_CONTRACTS.md",
         "docs/03_PIPELINES_QUALITY_AND_LAKEHOUSE.md",
         "docs/04_SERVING_AND_DASHBOARDS.md",
-        "docs/05_OPERATIONS_VALIDATION_AND_LIMITATIONS.md",
+        "docs/05_OPERATIONS_AND_VALIDATION.md",
+        "docs/06_REPOSITORY_GUIDE.md",
     ]
     expected_diagrams = [
         "diagrams/01_architecture_overview.png",

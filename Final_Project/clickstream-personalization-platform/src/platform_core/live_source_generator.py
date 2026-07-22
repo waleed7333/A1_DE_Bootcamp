@@ -26,7 +26,6 @@ from platform_core.config import load_settings
 from platform_core.source_generation import _discover_geo_locations
 from platform_core.streaming import _publish_clickstream
 
-
 TRAFFIC_SOURCE = "direct"
 DEVICE_TYPE = "mobile"
 BROWSER = "Chrome"
@@ -41,7 +40,9 @@ def parse_args() -> argparse.Namespace:
     parse_known_args is intentional so this script stays compatible if the
     platform launcher passes extra operational arguments in the future.
     """
-    parser = argparse.ArgumentParser( description="Generate small live Clickstream and Web Log source records" )
+    parser = argparse.ArgumentParser(
+        description="Generate small live Clickstream and Web Log source records"
+    )
     parser.add_argument("--project-root", default=".")
     parser.add_argument("--interval-seconds", type=int, default=20)
 
@@ -53,19 +54,27 @@ def utc_timestamp(value: datetime | None = None) -> str:
     """Return a UTC timestamp in the same format as the initial generator."""
     current = value or datetime.now(UTC)
 
-    return ( current.astimezone(UTC) .replace(microsecond=0) .isoformat() .replace("+00:00", "Z") )
+    return current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def json_line(payload: dict[str, Any]) -> str:
     """Write NDJSON in the same compact sorted style as initial source files."""
-    return json.dumps( payload, separators=(",", ":"), sort_keys=True, )
+    return json.dumps(
+        payload,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     """Write a small JSON state file atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text( json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", )
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     temporary.replace(path)
 
 
@@ -93,15 +102,23 @@ def load_geoip_locations(project_root: Path) -> list[dict[str, Any]]:
     settings = load_settings(project_root)
     seed = int(settings["source_generation"]["deterministic_seed"]) + 7919
 
-    locations = _discover_geo_locations( project_root, random.Random(seed), minimum=6, )
+    locations = _discover_geo_locations(
+        project_root,
+        random.Random(seed),
+        minimum=6,
+    )
 
     if not locations:
-        raise RuntimeError( "No GeoLite2-enrichable IP addresses are available for live generation" )
+        raise RuntimeError("No GeoLite2-enrichable IP addresses are available for live generation")
 
     return locations
 
 
-def build_live_event( sequence: int, event_time: datetime, location: dict[str, Any], ) -> dict[str, Any]:
+def build_live_event(
+    sequence: int,
+    event_time: datetime,
+    location: dict[str, Any],
+) -> dict[str, Any]:
     """Build one valid live Clickstream record.
 
     The record carries ip_address only. Geo fields are intentionally not written
@@ -134,7 +151,11 @@ def build_live_event( sequence: int, event_time: datetime, location: dict[str, A
     }
 
 
-def build_live_log( sequence: int, log_time: datetime, event: dict[str, Any], ) -> dict[str, Any]:
+def build_live_log(
+    sequence: int,
+    log_time: datetime,
+    event: dict[str, Any],
+) -> dict[str, Any]:
     """Build one valid Web Log correlated with the live Clickstream event."""
     suffix = str(event["event_id"]).split("_")[-1]
 
@@ -172,7 +193,7 @@ def publish_clickstream_line(project_root: Path, line: str) -> None:
         _publish_clickstream(project_root)
         return
 
-    raise RuntimeError( "Unsupported _publish_clickstream signature in platform_core.streaming" )
+    raise RuntimeError("Unsupported _publish_clickstream signature in platform_core.streaming")
 
 
 def run(project_root: Path, interval_seconds: int) -> int:
@@ -183,7 +204,7 @@ def run(project_root: Path, interval_seconds: int) -> int:
     clickstream_path = source_root / "clickstream" / "clickstream_events.jsonl"
     web_log_path = source_root / "web_logs" / "webserver_access.log"
 
-    state_path = ( project_root / "runtime" / "source_publishers" / "live_generator_state.json" )
+    state_path = project_root / "runtime" / "source_publishers" / "live_generator_state.json"
 
     locations = load_geoip_locations(project_root)
     state = read_state(state_path)
@@ -225,7 +246,10 @@ def main() -> int:
     args = parse_args()
     project_root = Path(args.project_root).resolve()
 
-    return run( project_root=project_root, interval_seconds=args.interval_seconds, )
+    return run(
+        project_root=project_root,
+        interval_seconds=args.interval_seconds,
+    )
 
 
 if __name__ == "__main__":

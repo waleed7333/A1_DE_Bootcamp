@@ -17,7 +17,13 @@ from airflow.sdk import dag, task
 REQUEST_ROOT = Path("/opt/project/runtime/airflow_requests")
 PENDING = REQUEST_ROOT / "pending"
 RESULTS = REQUEST_ROOT / "results"
-JOBS = ("user_scd2", "weather_enrichment", "holiday_enrichment", "validate_lakehouse", "publish_serving")
+JOBS = (
+    "user_scd2",
+    "weather_enrichment",
+    "holiday_enrichment",
+    "validate_lakehouse",
+    "publish_serving",
+)
 
 
 def safe_id(value: str) -> str:
@@ -41,7 +47,13 @@ def analytics_refresh():
         """Write one approved Spark request for the single Spark runner."""
         request_id = safe_id(f"{run_marker}_{job}")
         PENDING.mkdir(parents=True, exist_ok=True)
-        request = {"request_id": request_id, "run_id": request_id, "job": job, "requested_by": "airflow", "dag_id": "analytics_refresh"}
+        request = {
+            "request_id": request_id,
+            "run_id": request_id,
+            "job": job,
+            "requested_by": "airflow",
+            "dag_id": "analytics_refresh",
+        }
         target = PENDING / f"{request_id}.json"
         temporary = target.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")

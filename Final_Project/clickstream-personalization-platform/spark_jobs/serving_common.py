@@ -6,7 +6,8 @@ import os
 from typing import Iterable
 
 import clickhouse_connect
-from pyspark.sql import DataFrame, SparkSession, Window, functions as F
+from pyspark.sql import DataFrame, SparkSession, Window
+from pyspark.sql import functions as F
 from pyspark.sql.types import DecimalType, StringType, StructField, StructType
 
 CATALOG = "ecommerce"
@@ -23,6 +24,20 @@ TABLES = (
     "mart_web_experience_daily",
     "mart_navigation_paths",
     "mart_personalization_candidates",
+    "mart_context_impact_daily",
+)
+POWER_BI_VIEWS = tuple(f"v_{table}" for table in TABLES)
+
+REQUIRED_NON_EMPTY_SERVING_TABLES = (
+    "dim_date",
+    "dim_product",
+    "dim_user_current",
+    "fact_clickstream_event",
+    "fact_order",
+    "fact_order_item",
+    "mart_journey_session",
+    "mart_product_performance_daily",
+    "mart_web_experience_daily",
     "mart_context_impact_daily",
 )
 ORDER_SCHEMA = StructType(
@@ -153,6 +168,90 @@ def ensure_schema(client) -> None:
             f"MODIFY COLUMN {column_name} Nullable(String)"
         )
 
+
+def _query_scalar(client, query: str) -> int:
+    result = client.query(query)
+    if not result.result_rows:
+        return 0
+
+    value = result.result_rows[0][0]
+    return int(value or 0)
+
+
+def validate_serving_tables_for_build(
+    build_id: str,
+    counts: dict[str, int],
+) -> dict[str, object]:
+    """Validate the new build before it becomes the active ClickHouse build."""
+    missing_tables = [table for table in TABLES if table not in counts]
+
+    empty_required_tables = [
+        table for table in REQUIRED_NON_EMPTY_SERVING_TABLES if int(counts.get(table, 0)) <= 0
+    ]
+
+    passed = not missing_tables and not empty_required_tables
+
+    return {
+        "status": "PASSED" if passed else "FAILED",
+        "serving_build_id": build_id,
+        "expected_table_count": len(TABLES),
+        "observed_table_count": len(counts),
+        "missing_tables": missing_tables,
+        "empty_required_tables": empty_required_tables,
+    }
+
+
+def validate_active_serving_views(
+    client,
+    build_id: str,
+    counts: dict[str, int],
+) -> dict[str, object]:
+    """Validate that all stable Power BI views query the active serving build."""
+    view_counts: dict[str, int] = {}
+    failures: list[str] = []
+
+    for table in TABLES:
+        view_name = f"v_{table}"
+
+        try:
+            view_count = _query_scalar(
+                client,
+                f"SELECT count() FROM {DATABASE}.{view_name}",
+            )
+            view_counts[view_name] = view_count
+
+            expected_count = int(counts.get(table, 0))
+            if view_count != expected_count:
+                failures.append(f"{view_name}: expected {expected_count}, observed {view_count}")
+
+        except Exception as error:
+            failures.append(f"{view_name}: {type(error).__name__}: {error}")
+
+    active_build_rows = client.query(f"""
+        SELECT active_build_id
+        FROM {DATABASE}.serving_control
+        WHERE status = 'ACTIVE'
+        ORDER BY activated_at DESC
+        LIMIT 1
+        """).result_rows
+
+    active_build_id = str(active_build_rows[0][0]) if active_build_rows else ""
+
+    if active_build_id != build_id:
+        failures.append(
+            f"serving_control active build mismatch: expected {build_id}, observed {active_build_id}"
+        )
+
+    return {
+        "status": "PASSED" if not failures else "FAILED",
+        "expected_view_count": len(POWER_BI_VIEWS),
+        "observed_view_count": len(view_counts),
+        "active_build_id": active_build_id,
+        "view_counts": view_counts,
+        "failures": failures,
+    }
+
+
 REQUIRED_DATETIME_COLUMNS = {
     "dim_user_current": ("effective_from",),
     "fact_clickstream_event": ("event_timestamp",),
@@ -162,9 +261,7 @@ REQUIRED_DATETIME_COLUMNS = {
         "session_start",
         "session_end",
     ),
-    "mart_personalization_candidates": (
-        "last_interest_at",
-    ),
+    "mart_personalization_candidates": ("last_interest_at",),
 }
 
 
@@ -174,9 +271,7 @@ def _assert_required_datetime_values(
 ) -> None:
     """Fail clearly before ClickHouse receives an invalid NULL DateTime value."""
     required_columns = [
-        column
-        for column in REQUIRED_DATETIME_COLUMNS.get(table, ())
-        if column in dataframe.columns
+        column for column in REQUIRED_DATETIME_COLUMNS.get(table, ()) if column in dataframe.columns
     ]
 
     if not required_columns:
@@ -203,14 +298,10 @@ def _assert_required_datetime_values(
     }
 
     if invalid:
-        detail = ", ".join(
-            f"{column}={count}"
-            for column, count in invalid.items()
-        )
+        detail = ", ".join(f"{column}={count}" for column, count in invalid.items())
 
-        raise RuntimeError(
-            f"Serving frame {table} has NULL required DateTime values: {detail}"
-        )
+        raise RuntimeError(f"Serving frame {table} has NULL required DateTime values: {detail}")
+
 
 def write_dataframe(
     client,
@@ -298,22 +389,19 @@ def _parse_debezium_timestamp(raw_value):
         iso_timestamp,
     )
 
+
 def current_orders(spark: SparkSession) -> DataFrame:
     """Resolve current orders and parse Debezium timestamps safely."""
     parsed = spark.table(f"{CATALOG}.processed.orders_cdc_clean")
 
-    window = (
-        Window.partitionBy("order_id")
-        .orderBy(
-            F.col("source_lsn").desc_nulls_last(),
-            F.col("kafka_partition").desc(),
-            F.col("kafka_offset").desc(),
-        )
+    window = Window.partitionBy("order_id").orderBy(
+        F.col("source_lsn").desc_nulls_last(),
+        F.col("kafka_partition").desc(),
+        F.col("kafka_offset").desc(),
     )
 
     latest = (
-        parsed
-        .withColumn(
+        parsed.withColumn(
             "row_number",
             F.row_number().over(window),
         )
@@ -333,9 +421,7 @@ def current_orders(spark: SparkSession) -> DataFrame:
         )
         .withColumn(
             "order_timestamp",
-            _parse_debezium_timestamp(
-                F.col("order_timestamp_raw")
-            ),
+            _parse_debezium_timestamp(F.col("order_timestamp_raw")),
         )
     )
 
@@ -347,9 +433,7 @@ def current_orders(spark: SparkSession) -> DataFrame:
         F.col("record.order_status").alias("order_status"),
         F.col("record.payment_status").alias("payment_status"),
         F.col("record.currency").alias("currency"),
-        F.col("record.total_amount")
-        .cast(DecimalType(18, 2))
-        .alias("total_amount"),
+        F.col("record.total_amount").cast(DecimalType(18, 2)).alias("total_amount"),
         "source_lsn",
         "kafka_partition",
         "kafka_offset",

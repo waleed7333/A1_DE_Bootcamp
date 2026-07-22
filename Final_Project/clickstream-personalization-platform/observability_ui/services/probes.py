@@ -42,16 +42,36 @@ def generation_manifest() -> dict[str, Any]:
 
 
 def evidence_rows() -> list[dict[str, str]]:
-    """Return the small set of evidence a supervisor needs during a demonstration."""
+    """Return compact platform evidence for the Operations Console."""
     snapshot = latest_snapshot()
     streaming = streaming_status()
     validation = validation_status()
     serving = serving_status()
     return [
-        {"Evidence": "Platform health", "Status": str(snapshot.get("overall_status", "MISSING")), "Detail": str(snapshot.get("captured_at_utc", "No snapshot"))},
-        {"Evidence": "Spark streaming", "Status": str(streaming.get("status", "MISSING")), "Detail": f"Batch: {streaming.get('last_successful_batch_id', 'not recorded')}"},
-        {"Evidence": "Lakehouse validation", "Status": str(validation.get("status", "MISSING")), "Detail": str(validation.get("validation_id", validation.get("error", "No validation")))},
-        {"Evidence": "Active serving build", "Status": str(serving.get("status", "MISSING")), "Detail": str(serving.get("serving_build_id", serving.get("error", "No serving build")))},
+        {
+            "Evidence": "Platform health",
+            "Status": str(snapshot.get("overall_status", "MISSING")),
+            "Detail": str(snapshot.get("captured_at_utc", "No snapshot")),
+        },
+        {
+            "Evidence": "Spark streaming",
+            "Status": str(streaming.get("status", "MISSING")),
+            "Detail": f"Batch: {streaming.get('last_successful_batch_id', 'not recorded')}",
+        },
+        {
+            "Evidence": "Lakehouse validation",
+            "Status": str(validation.get("status", "MISSING")),
+            "Detail": str(
+                validation.get("validation_id", validation.get("error", "No validation"))
+            ),
+        },
+        {
+            "Evidence": "Active serving build",
+            "Status": str(serving.get("status", "MISSING")),
+            "Detail": str(
+                serving.get("serving_build_id", serving.get("error", "No serving build"))
+            ),
+        },
     ]
 
 
@@ -63,7 +83,15 @@ def quality_rows() -> list[dict[str, Any]]:
         for source in ("clickstream", "web_logs", "users_cdc", "orders_cdc", "order_items_cdc"):
             values = details.get(source)
             if isinstance(values, dict):
-                rows.append({"Source": source, "Raw": values.get("raw", 0), "Clean": values.get("clean", 0), "Quarantine": values.get("quarantine", 0), "Reconciled": values.get("reconciled", False)})
+                rows.append(
+                    {
+                        "Source": source,
+                        "Raw": values.get("raw", 0),
+                        "Clean": values.get("clean", 0),
+                        "Quarantine": values.get("quarantine", 0),
+                        "Reconciled": values.get("reconciled", False),
+                    }
+                )
     return rows
 
 

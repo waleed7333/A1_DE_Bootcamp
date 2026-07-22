@@ -10,48 +10,201 @@ Spark, not the generator, decides whether a streamed record is accepted or quara
 
 from __future__ import annotations
 
-import ipaddress
-import os
-import random
-import maxminddb
 import csv
 import hashlib
+import ipaddress
 import json
+import os
+import random
 import shutil
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Iterable
+
+import maxminddb
 
 from platform_core.config import load_settings
 
 UTC_NOW = UTC
 MONEY = Decimal("0.01")
-VALID_EVENT_TYPES = { "page_view", "product_view", "search", "scroll", "add_to_cart", "remove_from_cart", "checkout_start", "checkout_complete", "login", "logout", }
-PRODUCT_EVENTS = {"product_view", "add_to_cart", "remove_from_cart", "checkout_start", "checkout_complete"}
+VALID_EVENT_TYPES = {
+    "page_view",
+    "product_view",
+    "search",
+    "scroll",
+    "add_to_cart",
+    "remove_from_cart",
+    "checkout_start",
+    "checkout_complete",
+    "login",
+    "logout",
+}
+PRODUCT_EVENTS = {
+    "product_view",
+    "add_to_cart",
+    "remove_from_cart",
+    "checkout_start",
+    "checkout_complete",
+}
 CHECKOUT_EVENTS = {"checkout_start", "checkout_complete"}
 PRODUCT_CATEGORIES = {
-    "Electronics": ["Wireless Earbuds", "Smart Watch", "Bluetooth Speaker", "USB-C Hub", "Gaming Mouse", "Portable Charger"],
-    "Home": ["Coffee Maker", "Desk Lamp", "Air Purifier", "Storage Basket", "Kitchen Scale", "Water Bottle"],
-    "Fashion": ["Everyday Backpack", "Cotton Hoodie", "Running Shoes", "Classic Cap", "Travel Wallet", "Sports Jacket"],
-    "Beauty": ["Skin Care Set", "Hair Dryer", "Face Cleanser", "Body Lotion", "Makeup Brush Set", "Perfume Mist"],
-    "Sports": ["Yoga Mat", "Resistance Bands", "Fitness Tracker", "Insulated Bottle", "Training Gloves", "Jump Rope"],
-    "Books": ["Data Engineering Guide", "Product Design Book", "Business Analytics Book", "Python Cookbook", "Leadership Journal", "Travel Notebook"],
+    "Electronics": [
+        "Wireless Earbuds",
+        "Smart Watch",
+        "Bluetooth Speaker",
+        "USB-C Hub",
+        "Gaming Mouse",
+        "Portable Charger",
+    ],
+    "Home": [
+        "Coffee Maker",
+        "Desk Lamp",
+        "Air Purifier",
+        "Storage Basket",
+        "Kitchen Scale",
+        "Water Bottle",
+    ],
+    "Fashion": [
+        "Everyday Backpack",
+        "Cotton Hoodie",
+        "Running Shoes",
+        "Classic Cap",
+        "Travel Wallet",
+        "Sports Jacket",
+    ],
+    "Beauty": [
+        "Skin Care Set",
+        "Hair Dryer",
+        "Face Cleanser",
+        "Body Lotion",
+        "Makeup Brush Set",
+        "Perfume Mist",
+    ],
+    "Sports": [
+        "Yoga Mat",
+        "Resistance Bands",
+        "Fitness Tracker",
+        "Insulated Bottle",
+        "Training Gloves",
+        "Jump Rope",
+    ],
+    "Books": [
+        "Data Engineering Guide",
+        "Product Design Book",
+        "Business Analytics Book",
+        "Python Cookbook",
+        "Leadership Journal",
+        "Travel Notebook",
+    ],
 }
-GEO_CANDIDATE_IPS = [ "128.101.101.101", "128.32.12.14", "128.210.11.57", "128.2.42.95", "129.21.1.40", "129.105.49.1", "130.149.17.13", "131.111.8.42", "132.239.180.101", "137.132.21.27", "140.112.8.139", "143.248.5.130", "145.100.185.15", "147.102.222.210", "152.3.43.27", "155.246.89.20", "160.39.9.21", "171.64.7.115", "193.51.208.13", "202.112.0.36", ]
-FIRST_NAMES = ["Alex", "Maya", "Noah", "Lina", "Omar", "Sara", "Yusuf", "Nora", "Daniel", "Mina", "Adam", "Hana"]
-LAST_NAMES = ["Smith", "Brown", "Khan", "Miller", "Ali", "Jones", "Hassan", "Wilson", "Taylor", "Saleh", "Martin", "Moore"]
-BROWSERS = [("Chrome", "Windows"), ("Chrome", "Android"), ("Safari", "iOS"), ("Firefox", "Windows"), ("Edge", "Windows")]
+GEO_CANDIDATE_IPS = [
+    "128.101.101.101",
+    "128.32.12.14",
+    "128.210.11.57",
+    "128.2.42.95",
+    "129.21.1.40",
+    "129.105.49.1",
+    "130.149.17.13",
+    "131.111.8.42",
+    "132.239.180.101",
+    "137.132.21.27",
+    "140.112.8.139",
+    "143.248.5.130",
+    "145.100.185.15",
+    "147.102.222.210",
+    "152.3.43.27",
+    "155.246.89.20",
+    "160.39.9.21",
+    "171.64.7.115",
+    "193.51.208.13",
+    "202.112.0.36",
+]
+FIRST_NAMES = [
+    "Alex",
+    "Maya",
+    "Noah",
+    "Lina",
+    "Omar",
+    "Sara",
+    "Yusuf",
+    "Nora",
+    "Daniel",
+    "Mina",
+    "Adam",
+    "Hana",
+]
+LAST_NAMES = [
+    "Smith",
+    "Brown",
+    "Khan",
+    "Miller",
+    "Ali",
+    "Jones",
+    "Hassan",
+    "Wilson",
+    "Taylor",
+    "Saleh",
+    "Martin",
+    "Moore",
+]
+BROWSERS = [
+    ("Chrome", "Windows"),
+    ("Chrome", "Android"),
+    ("Safari", "iOS"),
+    ("Firefox", "Windows"),
+    ("Edge", "Windows"),
+]
 TRAFFIC_SOURCES = ["organic", "paid_search", "email", "social", "direct"]
 
-PRODUCT_FIELDS = ["product_id", "product_name", "category", "price", "inventory", "created_at", "updated_at"]
-USER_FIELDS = ["user_id", "email", "first_name", "last_name", "membership_type", "account_status", "country_code", "city", "created_at", "updated_at"]
-ORDER_FIELDS = [
-    "order_id", "user_id", "checkout_id", "order_timestamp", "order_status", "payment_status", "currency",
-    "subtotal_amount", "discount_amount", "tax_amount", "shipping_amount", "total_amount", "created_at", "updated_at",
+PRODUCT_FIELDS = [
+    "product_id",
+    "product_name",
+    "category",
+    "price",
+    "inventory",
+    "created_at",
+    "updated_at",
 ]
-ORDER_ITEM_FIELDS = ["order_item_id", "order_id", "product_id", "quantity", "unit_price", "line_total", "created_at", "updated_at"]
+USER_FIELDS = [
+    "user_id",
+    "email",
+    "first_name",
+    "last_name",
+    "membership_type",
+    "account_status",
+    "country_code",
+    "city",
+    "created_at",
+    "updated_at",
+]
+ORDER_FIELDS = [
+    "order_id",
+    "user_id",
+    "checkout_id",
+    "order_timestamp",
+    "order_status",
+    "payment_status",
+    "currency",
+    "subtotal_amount",
+    "discount_amount",
+    "tax_amount",
+    "shipping_amount",
+    "total_amount",
+    "created_at",
+    "updated_at",
+]
+ORDER_ITEM_FIELDS = [
+    "order_item_id",
+    "order_id",
+    "product_id",
+    "quantity",
+    "unit_price",
+    "line_total",
+    "created_at",
+    "updated_at",
+]
 
 
 @dataclass(frozen=True)
@@ -129,6 +282,7 @@ def _clear_directory(path: Path) -> None:
             shutil.rmtree(item)
         else:
             item.unlink()
+
 
 def _geoip_path(project_root: Path) -> Path:
     """Return the local GeoLite2 database path used by source generation."""
@@ -218,7 +372,11 @@ def _random_public_ipv4(randomizer: random.Random) -> str:
             return ip_address
 
 
-def _discover_geo_locations( project_root: Path, randomizer: random.Random, minimum: int = 10, ) -> list[dict[str, Any]]:
+def _discover_geo_locations(
+    project_root: Path,
+    randomizer: random.Random,
+    minimum: int = 10,
+) -> list[dict[str, Any]]:
     """Build a small deterministic IP pool proven by the local GeoLite2 file.
 
     Source records only carry ip_address. Country/city are not generated into
@@ -232,9 +390,7 @@ def _discover_geo_locations( project_root: Path, randomizer: random.Random, mini
     database_path = _geoip_path(project_root)
 
     if not database_path.is_file():
-        raise SourceValidationError(
-            f"GeoLite2 database not found: {database_path}"
-        )
+        raise SourceValidationError(f"GeoLite2 database not found: {database_path}")
 
     discovered: list[dict[str, Any]] = []
     seen_ips: set[str] = set()
@@ -301,10 +457,7 @@ def _discover_geo_locations( project_root: Path, randomizer: random.Random, mini
             return selected
 
     # Pass 2: fill remaining slots with additional valid cities.
-    selected_keys = {
-        (str(item["country_code"]), str(item["city"]))
-        for item in selected
-    }
+    selected_keys = {(str(item["country_code"]), str(item["city"])) for item in selected}
 
     for location in discovered:
         geo_key = (
@@ -323,6 +476,7 @@ def _discover_geo_locations( project_root: Path, randomizer: random.Random, mini
 
     return selected
 
+
 class LocalSourceGenerator:
     """Create deterministic source files while preserving the static catalog."""
 
@@ -335,7 +489,11 @@ class LocalSourceGenerator:
         self.catalog_path = project_root / self.settings["paths"]["product_catalog"]
         self.manifest_path = self.source_root / "generation_manifest.json"
         self.base_time = _parse_timestamp(self.generation["base_timestamp"])
-        self.locations = _discover_geo_locations( project_root, random.Random(int(self.generation["deterministic_seed"]) + 7919), minimum=6, )
+        self.locations = _discover_geo_locations(
+            project_root,
+            random.Random(int(self.generation["deterministic_seed"]) + 7919),
+            minimum=6,
+        )
 
     def generate(self) -> tuple[list[SourceCheck], bool]:
         """Generate every source and validate the result without Kafka or Docker."""
@@ -376,14 +534,27 @@ class LocalSourceGenerator:
                     "geoip_validated_ip_pool_size": len(self.locations),
                 },
             }
-            self.manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            self.manifest_path.write_text(
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
             checks, valid = validate_sources(self.project_root, write_report=True)
-            checks.insert(0, _check("PASS", "Static product catalog", f"{catalog_action}; {len(catalog)} products"))
+            checks.insert(
+                0,
+                _check(
+                    "PASS", "Static product catalog", f"{catalog_action}; {len(catalog)} products"
+                ),
+            )
             return checks, valid
         except Exception as error:
             report = self.project_root / "reports" / "source_generation_report.json"
             report.parent.mkdir(parents=True, exist_ok=True)
-            report.write_text(json.dumps({"status": "FAILED", "error": f"{type(error).__name__}: {error}"}, indent=2) + "\n", encoding="utf-8")
+            report.write_text(
+                json.dumps(
+                    {"status": "FAILED", "error": f"{type(error).__name__}: {error}"}, indent=2
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             return [_check("FAIL", "Source generation", f"{type(error).__name__}: {error}")], False
 
     def _ensure_catalog(self) -> tuple[str, list[dict[str, str]]]:
@@ -394,17 +565,25 @@ class LocalSourceGenerator:
         categories = list(PRODUCT_CATEGORIES)
         for index in range(1, int(self.generation["product_catalog_count"]) + 1):
             category = categories[(index - 1) % len(categories)]
-            name = PRODUCT_CATEGORIES[category][((index - 1) // len(categories)) % len(PRODUCT_CATEGORIES[category])]
+            name = PRODUCT_CATEGORIES[category][
+                ((index - 1) // len(categories)) % len(PRODUCT_CATEGORIES[category])
+            ]
             created = self.base_time - timedelta(days=90 - index % 25)
-            rows.append({
-                "product_id": f"PRD{index:06d}",
-                "product_name": f"{name} {index:02d}",
-                "category": category,
-                "price": _money(Decimal("9.99") + Decimal((index * 7) % 50) + Decimal(index % 3) * Decimal("0.25")),
-                "inventory": str(20 + (index * 13) % 180),
-                "created_at": _timestamp(created),
-                "updated_at": _timestamp(created + timedelta(days=index % 10)),
-            })
+            rows.append(
+                {
+                    "product_id": f"PRD{index:06d}",
+                    "product_name": f"{name} {index:02d}",
+                    "category": category,
+                    "price": _money(
+                        Decimal("9.99")
+                        + Decimal((index * 7) % 50)
+                        + Decimal(index % 3) * Decimal("0.25")
+                    ),
+                    "inventory": str(20 + (index * 13) % 180),
+                    "created_at": _timestamp(created),
+                    "updated_at": _timestamp(created + timedelta(days=index % 10)),
+                }
+            )
         _write_csv(self.catalog_path, PRODUCT_FIELDS, rows)
         return "created once", rows
 
@@ -417,21 +596,25 @@ class LocalSourceGenerator:
             created = self.base_time - timedelta(days=180 - index)
             first = FIRST_NAMES[(index - 1) % len(FIRST_NAMES)]
             last = LAST_NAMES[(index * 3) % len(LAST_NAMES)]
-            rows.append({
-                "user_id": f"USR{index:06d}",
-                "email": f"{first.lower()}.{last.lower()}.{index:03d}@example.test",
-                "first_name": first,
-                "last_name": last,
-                "membership_type": ("guest", "standard", "premium")[index % 3],
-                "account_status": "active" if index % 13 else "inactive",
-                "country_code": country,
-                "city": city,
-                "created_at": _timestamp(created),
-                "updated_at": _timestamp(created + timedelta(days=index % 21)),
-            })
+            rows.append(
+                {
+                    "user_id": f"USR{index:06d}",
+                    "email": f"{first.lower()}.{last.lower()}.{index:03d}@example.test",
+                    "first_name": first,
+                    "last_name": last,
+                    "membership_type": ("guest", "standard", "premium")[index % 3],
+                    "account_status": "active" if index % 13 else "inactive",
+                    "country_code": country,
+                    "city": city,
+                    "created_at": _timestamp(created),
+                    "updated_at": _timestamp(created + timedelta(days=index % 21)),
+                }
+            )
         return rows
 
-    def _orders(self, catalog: list[dict[str, str]], users: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    def _orders(
+        self, catalog: list[dict[str, str]], users: list[dict[str, str]]
+    ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         orders: list[dict[str, str]] = []
         items: list[dict[str, str]] = []
         item_number = 1
@@ -445,16 +628,18 @@ class LocalSourceGenerator:
                 unit_price = Decimal(product["price"])
                 line_total = (unit_price * quantity).quantize(MONEY, rounding=ROUND_HALF_UP)
                 subtotal += line_total
-                items.append({
-                    "order_item_id": f"OIT{item_number:06d}",
-                    "order_id": f"ORD{index:06d}",
-                    "product_id": product["product_id"],
-                    "quantity": str(quantity),
-                    "unit_price": _money(unit_price),
-                    "line_total": _money(line_total),
-                    "created_at": _timestamp(created),
-                    "updated_at": _timestamp(created),
-                })
+                items.append(
+                    {
+                        "order_item_id": f"OIT{item_number:06d}",
+                        "order_id": f"ORD{index:06d}",
+                        "product_id": product["product_id"],
+                        "quantity": str(quantity),
+                        "unit_price": _money(unit_price),
+                        "line_total": _money(line_total),
+                        "created_at": _timestamp(created),
+                        "updated_at": _timestamp(created),
+                    }
+                )
                 item_number += 1
             discount = Decimal("5.00") if index % 5 == 0 else Decimal("0.00")
             discount = min(discount, subtotal)
@@ -466,26 +651,44 @@ class LocalSourceGenerator:
             elif index % 19 == 0:
                 order_status, payment_status = "cancelled", "refunded"
             else:
-                order_status, payment_status = ("delivered" if index % 3 == 0 else "shipped"), "paid"
-            orders.append({
-                "order_id": f"ORD{index:06d}",
-                "user_id": user["user_id"],
-                "checkout_id": f"CHK{index:06d}",
-                "order_timestamp": _timestamp(created),
-                "order_status": order_status,
-                "payment_status": payment_status,
-                "currency": "USD",
-                "subtotal_amount": _money(subtotal),
-                "discount_amount": _money(discount),
-                "tax_amount": _money(tax),
-                "shipping_amount": _money(shipping),
-                "total_amount": _money(subtotal - discount + tax + shipping),
-                "created_at": _timestamp(created),
-                "updated_at": _timestamp(created + timedelta(minutes=10)),
-            })
+                order_status, payment_status = (
+                    "delivered" if index % 3 == 0 else "shipped"
+                ), "paid"
+            orders.append(
+                {
+                    "order_id": f"ORD{index:06d}",
+                    "user_id": user["user_id"],
+                    "checkout_id": f"CHK{index:06d}",
+                    "order_timestamp": _timestamp(created),
+                    "order_status": order_status,
+                    "payment_status": payment_status,
+                    "currency": "USD",
+                    "subtotal_amount": _money(subtotal),
+                    "discount_amount": _money(discount),
+                    "tax_amount": _money(tax),
+                    "shipping_amount": _money(shipping),
+                    "total_amount": _money(subtotal - discount + tax + shipping),
+                    "created_at": _timestamp(created),
+                    "updated_at": _timestamp(created + timedelta(minutes=10)),
+                }
+            )
         return orders, items
 
-    def _event(self, sequence: int, timestamp: datetime, session_id: str, user: dict[str, str], event_type: str, *, product_id: str = "", checkout_id: str = "", order_id: str = "", page_url: str = "", request_id: str | None = None, search_query: str = "") -> dict[str, Any]:
+    def _event(
+        self,
+        sequence: int,
+        timestamp: datetime,
+        session_id: str,
+        user: dict[str, str],
+        event_type: str,
+        *,
+        product_id: str = "",
+        checkout_id: str = "",
+        order_id: str = "",
+        page_url: str = "",
+        request_id: str | None = None,
+        search_query: str = "",
+    ) -> dict[str, Any]:
         """Build a valid event. Client-only scroll events intentionally omit request_id."""
         location = self.locations[(sequence - 1) % len(self.locations)]
         ip_address = str(location["ip_address"])
@@ -514,7 +717,9 @@ class LocalSourceGenerator:
             "time_on_page_seconds": 10 + sequence % 80,
         }
 
-    def _clickstream(self, orders: list[dict[str, str]], items: list[dict[str, str]], users: list[dict[str, str]]) -> tuple[list[str], dict[str, int]]:
+    def _clickstream(
+        self, orders: list[dict[str, str]], items: list[dict[str, str]], users: list[dict[str, str]]
+    ) -> tuple[list[str], dict[str, int]]:
         """Create one mixed JSONL source. Invalid and duplicate records stay in the same file."""
         order_products: dict[str, str] = {}
         for item in items:
@@ -535,55 +740,182 @@ class LocalSourceGenerator:
                 ("checkout_complete", 7, "/checkout/complete"),
             ):
                 request_id = f"REQ{sequence:08d}"
-                valid_events.append(self._event(sequence, start + timedelta(minutes=minute), session_id, user, event_type, product_id=product_id, checkout_id=order["checkout_id"], order_id=order["order_id"], page_url=page, request_id=request_id))
+                valid_events.append(
+                    self._event(
+                        sequence,
+                        start + timedelta(minutes=minute),
+                        session_id,
+                        user,
+                        event_type,
+                        product_id=product_id,
+                        checkout_id=order["checkout_id"],
+                        order_id=order["order_id"],
+                        page_url=page,
+                        request_id=request_id,
+                    )
+                )
                 sequence += 1
         for index in range(int(self.generation["abandoned_session_count"])):
             user = users[(index * 7) % len(users)]
             product = items[index % len(items)]["product_id"]
             start = self.base_time + timedelta(days=4, hours=index)
             session_id = f"SES_ABANDON_{index:03d}"
-            for event_type, minute, page in (("page_view", 0, "/home"), ("product_view", 1, f"/products/{product}"), ("add_to_cart", 4, "/cart"), ("checkout_start", 6, "/checkout")):
-                valid_events.append(self._event(sequence, start + timedelta(minutes=minute), session_id, user, event_type, product_id=product, checkout_id=f"ABN{index:06d}", page_url=page, request_id=f"REQ{sequence:08d}"))
+            for event_type, minute, page in (
+                ("page_view", 0, "/home"),
+                ("product_view", 1, f"/products/{product}"),
+                ("add_to_cart", 4, "/cart"),
+                ("checkout_start", 6, "/checkout"),
+            ):
+                valid_events.append(
+                    self._event(
+                        sequence,
+                        start + timedelta(minutes=minute),
+                        session_id,
+                        user,
+                        event_type,
+                        product_id=product,
+                        checkout_id=f"ABN{index:06d}",
+                        page_url=page,
+                        request_id=f"REQ{sequence:08d}",
+                    )
+                )
                 sequence += 1
         for index in range(int(self.generation["browsing_session_count"])):
             user = users[(index * 11) % len(users)]
             product = items[(index + 13) % len(items)]["product_id"]
             start = self.base_time + timedelta(days=5, hours=index)
             session_id = f"SES_BROWSE_{index:03d}"
-            valid_events.append(self._event(sequence, start, session_id, user, "page_view", page_url="/home", request_id=f"REQ{sequence:08d}")); sequence += 1
-            valid_events.append(self._event(sequence, start + timedelta(minutes=1), session_id, user, "search", page_url="/search", request_id=f"REQ{sequence:08d}", search_query="wireless")); sequence += 1
-            valid_events.append(self._event(sequence, start + timedelta(minutes=2), session_id, user, "product_view", product_id=product, page_url=f"/products/{product}", request_id=f"REQ{sequence:08d}")); sequence += 1
-            valid_events.append(self._event(sequence, start + timedelta(minutes=3), session_id, user, "scroll", product_id=product, page_url=f"/products/{product}", request_id=None)); sequence += 1
+            valid_events.append(
+                self._event(
+                    sequence,
+                    start,
+                    session_id,
+                    user,
+                    "page_view",
+                    page_url="/home",
+                    request_id=f"REQ{sequence:08d}",
+                )
+            )
+            sequence += 1
+            valid_events.append(
+                self._event(
+                    sequence,
+                    start + timedelta(minutes=1),
+                    session_id,
+                    user,
+                    "search",
+                    page_url="/search",
+                    request_id=f"REQ{sequence:08d}",
+                    search_query="wireless",
+                )
+            )
+            sequence += 1
+            valid_events.append(
+                self._event(
+                    sequence,
+                    start + timedelta(minutes=2),
+                    session_id,
+                    user,
+                    "product_view",
+                    product_id=product,
+                    page_url=f"/products/{product}",
+                    request_id=f"REQ{sequence:08d}",
+                )
+            )
+            sequence += 1
+            valid_events.append(
+                self._event(
+                    sequence,
+                    start + timedelta(minutes=3),
+                    session_id,
+                    user,
+                    "scroll",
+                    product_id=product,
+                    page_url=f"/products/{product}",
+                    request_id=None,
+                )
+            )
+            sequence += 1
         # Add two valid late-arrival records. Their event times are old, but their file position is last.
         for index in range(int(self.generation["late_event_count"])):
             user = users[index]
             product = items[index]["product_id"]
-            valid_events.append(self._event(sequence, self.base_time - timedelta(hours=1, minutes=index), f"SES_LATE_{index:03d}", user, "product_view", product_id=product, request_id=f"REQ{sequence:08d}"))
+            valid_events.append(
+                self._event(
+                    sequence,
+                    self.base_time - timedelta(hours=1, minutes=index),
+                    f"SES_LATE_{index:03d}",
+                    user,
+                    "product_view",
+                    product_id=product,
+                    request_id=f"REQ{sequence:08d}",
+                )
+            )
             sequence += 1
 
         # Keep valid events in natural event order then interleave quality records later.
         lines = [json.dumps(event, separators=(",", ":"), sort_keys=True) for event in valid_events]
         duplicate_lines = [lines[5], lines[20]]
         invalid_lines = [
-            json.dumps({"contract_version": "1.0", "event_timestamp": _timestamp(self.base_time), "session_id": "SES_BAD_001", "visitor_id": "VIS_BAD", "event_type": "page_view"}),
-            json.dumps({"contract_version": "1.0", "event_id": "EVT_BAD_TYPE", "event_timestamp": _timestamp(self.base_time), "session_id": "SES_BAD_002", "visitor_id": "VIS_BAD", "event_type": "unsupported_event", "page_url": "/home"}),
+            json.dumps(
+                {
+                    "contract_version": "1.0",
+                    "event_timestamp": _timestamp(self.base_time),
+                    "session_id": "SES_BAD_001",
+                    "visitor_id": "VIS_BAD",
+                    "event_type": "page_view",
+                }
+            ),
+            json.dumps(
+                {
+                    "contract_version": "1.0",
+                    "event_id": "EVT_BAD_TYPE",
+                    "event_timestamp": _timestamp(self.base_time),
+                    "session_id": "SES_BAD_002",
+                    "visitor_id": "VIS_BAD",
+                    "event_type": "unsupported_event",
+                    "page_url": "/home",
+                }
+            ),
             "{this is deliberately malformed json",
-            json.dumps({"contract_version": "9.9", "event_id": "EVT_BAD_VERSION", "event_timestamp": _timestamp(self.base_time), "session_id": "SES_BAD_003", "visitor_id": "VIS_BAD", "event_type": "page_view", "page_url": "/home"}),
-            json.dumps({"contract_version": "1.0", "event_id": "EVT_BAD_CHECKOUT", "event_timestamp": _timestamp(self.base_time), "session_id": "SES_BAD_004", "visitor_id": "VIS_BAD", "event_type": "checkout_start", "page_url": "/checkout"}),
+            json.dumps(
+                {
+                    "contract_version": "9.9",
+                    "event_id": "EVT_BAD_VERSION",
+                    "event_timestamp": _timestamp(self.base_time),
+                    "session_id": "SES_BAD_003",
+                    "visitor_id": "VIS_BAD",
+                    "event_type": "page_view",
+                    "page_url": "/home",
+                }
+            ),
+            json.dumps(
+                {
+                    "contract_version": "1.0",
+                    "event_id": "EVT_BAD_CHECKOUT",
+                    "event_timestamp": _timestamp(self.base_time),
+                    "session_id": "SES_BAD_004",
+                    "visitor_id": "VIS_BAD",
+                    "event_type": "checkout_start",
+                    "page_url": "/checkout",
+                }
+            ),
         ]
         # Mix all cases in the one source file. Spark must identify every rejected record.
         mixed = list(lines)
         insertion_points = [7, 31, 66, 101, 145]
-        for position, bad in zip(insertion_points, invalid_lines):
+        for position, bad in zip(insertion_points, invalid_lines, strict=False):
             mixed.insert(min(position, len(mixed)), bad)
-        for position, duplicate in zip([14, 88], duplicate_lines):
+        for position, duplicate in zip([14, 88], duplicate_lines, strict=False):
             mixed.insert(min(position, len(mixed)), duplicate)
         return mixed, {
             "clickstream_valid": len(valid_events),
             "clickstream_invalid": len(invalid_lines),
             "clickstream_duplicates": len(duplicate_lines),
             "clickstream_total": len(mixed),
-            "clickstream_http_eligible": sum(1 for event in valid_events if event.get("request_id")),
+            "clickstream_http_eligible": sum(
+                1 for event in valid_events if event.get("request_id")
+            ),
         }
 
     def _web_logs(self, clickstream_lines: list[str]) -> tuple[list[str], dict[str, int]]:
@@ -594,7 +926,13 @@ class LocalSourceGenerator:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(event, dict) and event.get("request_id") and event.get("contract_version") == "1.0" and event.get("event_type") in VALID_EVENT_TYPES and event.get("event_id"):
+            if (
+                isinstance(event, dict)
+                and event.get("request_id")
+                and event.get("contract_version") == "1.0"
+                and event.get("event_type") in VALID_EVENT_TYPES
+                and event.get("event_id")
+            ):
                 valid_events.append(event)
         seen: set[str] = set()
         unique_events = []
@@ -605,30 +943,70 @@ class LocalSourceGenerator:
                 unique_events.append(event)
         lines: list[str] = []
         for index, event in enumerate(unique_events, start=1):
-            lines.append(json.dumps({
-                "contract_version": "1.0",
-                "log_id": f"LOG{index:08d}",
-                "request_id": event["request_id"],
-                "timestamp": event["event_timestamp"],
-                "ip_address": event.get("ip_address"),
-                "http_method": "POST" if event["event_type"] in {"add_to_cart", "checkout_start", "checkout_complete"} else "GET",
-                "endpoint": event["page_url"],
-                "status_code": 500 if index % 41 == 0 else 200,
-                "response_time_ms": 4000 if index % 37 == 0 else 80 + index % 450,
-                "user_agent": f"SyntheticBrowser/{event.get('browser', 'Unknown')}",
-                "bytes_sent": 1200 + index * 3,
-            }, separators=(",", ":"), sort_keys=True))
+            lines.append(
+                json.dumps(
+                    {
+                        "contract_version": "1.0",
+                        "log_id": f"LOG{index:08d}",
+                        "request_id": event["request_id"],
+                        "timestamp": event["event_timestamp"],
+                        "ip_address": event.get("ip_address"),
+                        "http_method": (
+                            "POST"
+                            if event["event_type"]
+                            in {"add_to_cart", "checkout_start", "checkout_complete"}
+                            else "GET"
+                        ),
+                        "endpoint": event["page_url"],
+                        "status_code": 500 if index % 41 == 0 else 200,
+                        "response_time_ms": 4000 if index % 37 == 0 else 80 + index % 450,
+                        "user_agent": f"SyntheticBrowser/{event.get('browser', 'Unknown')}",
+                        "bytes_sent": 1200 + index * 3,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            )
         duplicate_lines = [lines[3], lines[13]]
         invalid_lines = [
-            json.dumps({"contract_version": "1.0", "request_id": "REQ_BAD_001", "timestamp": _timestamp(self.base_time), "endpoint": "/home", "status_code": 200, "response_time_ms": 50}),
-            json.dumps({"contract_version": "1.0", "log_id": "LOG_BAD_STATUS", "request_id": "REQ_BAD_002", "timestamp": _timestamp(self.base_time), "endpoint": "/home", "status_code": 900, "response_time_ms": 50}),
+            json.dumps(
+                {
+                    "contract_version": "1.0",
+                    "request_id": "REQ_BAD_001",
+                    "timestamp": _timestamp(self.base_time),
+                    "endpoint": "/home",
+                    "status_code": 200,
+                    "response_time_ms": 50,
+                }
+            ),
+            json.dumps(
+                {
+                    "contract_version": "1.0",
+                    "log_id": "LOG_BAD_STATUS",
+                    "request_id": "REQ_BAD_002",
+                    "timestamp": _timestamp(self.base_time),
+                    "endpoint": "/home",
+                    "status_code": 900,
+                    "response_time_ms": 50,
+                }
+            ),
             "invalid web log line",
-            json.dumps({"contract_version": "9.9", "log_id": "LOG_BAD_VERSION", "request_id": "REQ_BAD_003", "timestamp": _timestamp(self.base_time), "endpoint": "/home", "status_code": 200, "response_time_ms": 50}),
+            json.dumps(
+                {
+                    "contract_version": "9.9",
+                    "log_id": "LOG_BAD_VERSION",
+                    "request_id": "REQ_BAD_003",
+                    "timestamp": _timestamp(self.base_time),
+                    "endpoint": "/home",
+                    "status_code": 200,
+                    "response_time_ms": 50,
+                }
+            ),
         ]
         mixed = list(lines)
-        for position, bad in zip([11, 45, 90, 135], invalid_lines):
+        for position, bad in zip([11, 45, 90, 135], invalid_lines, strict=False):
             mixed.insert(min(position, len(mixed)), bad)
-        for position, duplicate in zip([19, 77], duplicate_lines):
+        for position, duplicate in zip([19, 77], duplicate_lines, strict=False):
             mixed.insert(min(position, len(mixed)), duplicate)
         return mixed, {
             "web_logs_valid": len(lines),
@@ -637,19 +1015,50 @@ class LocalSourceGenerator:
             "web_logs_total": len(mixed),
         }
 
-    def _write_files(self, users: list[dict[str, str]], orders: list[dict[str, str]], items: list[dict[str, str]], clickstream: list[str], web_logs: list[str]) -> dict[str, dict[str, Any]]:
+    def _write_files(
+        self,
+        users: list[dict[str, str]],
+        orders: list[dict[str, str]],
+        items: list[dict[str, str]],
+        clickstream: list[str],
+        web_logs: list[str],
+    ) -> dict[str, dict[str, Any]]:
         """Write the four source groups and record small non-secret file metadata."""
         files: dict[str, dict[str, Any]] = {}
         targets = [
-            (self.source_root / "postgres" / "users_seed.csv", lambda p: _write_csv(p, USER_FIELDS, users), "csv"),
-            (self.source_root / "postgres" / "orders_seed.csv", lambda p: _write_csv(p, ORDER_FIELDS, orders), "csv"),
-            (self.source_root / "postgres" / "order_items_seed.csv", lambda p: _write_csv(p, ORDER_ITEM_FIELDS, items), "csv"),
-            (self.source_root / "clickstream" / "clickstream_events.jsonl", lambda p: _write_lines(p, clickstream), "jsonl"),
-            (self.source_root / "web_logs" / "webserver_access.log", lambda p: _write_lines(p, web_logs), "ndjson_log"),
+            (
+                self.source_root / "postgres" / "users_seed.csv",
+                lambda p: _write_csv(p, USER_FIELDS, users),
+                "csv",
+            ),
+            (
+                self.source_root / "postgres" / "orders_seed.csv",
+                lambda p: _write_csv(p, ORDER_FIELDS, orders),
+                "csv",
+            ),
+            (
+                self.source_root / "postgres" / "order_items_seed.csv",
+                lambda p: _write_csv(p, ORDER_ITEM_FIELDS, items),
+                "csv",
+            ),
+            (
+                self.source_root / "clickstream" / "clickstream_events.jsonl",
+                lambda p: _write_lines(p, clickstream),
+                "jsonl",
+            ),
+            (
+                self.source_root / "web_logs" / "webserver_access.log",
+                lambda p: _write_lines(p, web_logs),
+                "ndjson_log",
+            ),
         ]
         for path, writer, kind in targets:
             count = writer(path)
-            files[str(path.relative_to(self.project_root))] = {"record_count": count, "kind": kind, "sha256": _sha256(path)}
+            files[str(path.relative_to(self.project_root))] = {
+                "record_count": count,
+                "kind": kind,
+                "sha256": _sha256(path),
+            }
         return files
 
 
@@ -661,9 +1070,16 @@ def _validate_catalog(path: Path, expected_count: int) -> SourceCheck:
     if len(ids) != len(set(ids)):
         raise SourceValidationError("Product Catalog contains duplicate product_id values")
     if len(rows) != expected_count:
-        raise SourceValidationError(f"Product Catalog expected {expected_count} rows but found {len(rows)}")
+        raise SourceValidationError(
+            f"Product Catalog expected {expected_count} rows but found {len(rows)}"
+        )
     for row in rows:
-        if not row["product_name"].strip() or not row["category"].strip() or Decimal(row["price"]) < 0 or int(row["inventory"]) < 0:
+        if (
+            not row["product_name"].strip()
+            or not row["category"].strip()
+            or Decimal(row["price"]) < 0
+            or int(row["inventory"]) < 0
+        ):
             raise SourceValidationError(f"Invalid Product Catalog record: {row.get('product_id')}")
     return _check("PASS", "Product Catalog", f"{len(rows)} static valid products")
 
@@ -689,7 +1105,11 @@ def _source_line_counts(lines: list[str], source: str) -> tuple[int, int, int]:
         except json.JSONDecodeError:
             invalid += 1
             continue
-        if not isinstance(payload, dict) or payload.get("contract_version") != "1.0" or not payload.get(key):
+        if (
+            not isinstance(payload, dict)
+            or payload.get("contract_version") != "1.0"
+            or not payload.get(key)
+        ):
             invalid += 1
             continue
         if source == "clickstream":
@@ -705,7 +1125,7 @@ def _source_line_counts(lines: list[str], source: str) -> tuple[int, int, int]:
             if payload.get("event_type") in CHECKOUT_EVENTS and not payload.get("checkout_id"):
                 invalid += 1
                 continue
-            
+
         if source == "web_logs" and not (100 <= int(payload.get("status_code", -1)) <= 599):
             invalid += 1
             continue
@@ -718,7 +1138,9 @@ def _source_line_counts(lines: list[str], source: str) -> tuple[int, int, int]:
     return valid, invalid, duplicate
 
 
-def validate_sources(project_root: Path, *, write_report: bool = True) -> tuple[list[SourceCheck], bool]:
+def validate_sources(
+    project_root: Path, *, write_report: bool = True
+) -> tuple[list[SourceCheck], bool]:
     """Validate files without requiring that mixed stream files are clean."""
     settings = load_settings(project_root)
     source_root = project_root / settings["paths"]["source"]
@@ -728,22 +1150,71 @@ def validate_sources(project_root: Path, *, write_report: bool = True) -> tuple[
         if not manifest_path.is_file():
             raise SourceValidationError("Missing data/source/generation_manifest.json")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        checks.append(_validate_catalog(project_root / settings["paths"]["product_catalog"], int(settings["source_generation"]["product_catalog_count"])))
-        checks.append(_validate_seed(source_root / "postgres" / "users_seed.csv", USER_FIELDS, "user_id", "Users seed"))
-        checks.append(_validate_seed(source_root / "postgres" / "orders_seed.csv", ORDER_FIELDS, "order_id", "Orders seed"))
-        checks.append(_validate_seed(source_root / "postgres" / "order_items_seed.csv", ORDER_ITEM_FIELDS, "order_item_id", "Order items seed"))
+        checks.append(
+            _validate_catalog(
+                project_root / settings["paths"]["product_catalog"],
+                int(settings["source_generation"]["product_catalog_count"]),
+            )
+        )
+        checks.append(
+            _validate_seed(
+                source_root / "postgres" / "users_seed.csv", USER_FIELDS, "user_id", "Users seed"
+            )
+        )
+        checks.append(
+            _validate_seed(
+                source_root / "postgres" / "orders_seed.csv",
+                ORDER_FIELDS,
+                "order_id",
+                "Orders seed",
+            )
+        )
+        checks.append(
+            _validate_seed(
+                source_root / "postgres" / "order_items_seed.csv",
+                ORDER_ITEM_FIELDS,
+                "order_item_id",
+                "Order items seed",
+            )
+        )
         click_lines = _read_lines(source_root / "clickstream" / "clickstream_events.jsonl")
         log_lines = _read_lines(source_root / "web_logs" / "webserver_access.log")
         click_counts = _source_line_counts(click_lines, "clickstream")
         log_counts = _source_line_counts(log_lines, "web_logs")
         expected = manifest["counts"]
-        if click_counts != (expected["clickstream_valid"], expected["clickstream_invalid"], expected["clickstream_duplicates"]):
+        if click_counts != (
+            expected["clickstream_valid"],
+            expected["clickstream_invalid"],
+            expected["clickstream_duplicates"],
+        ):
             raise SourceValidationError(f"Clickstream mixed-source count mismatch: {click_counts}")
-        if log_counts != (expected["web_logs_valid"], expected["web_logs_invalid"], expected["web_logs_duplicates"]):
+        if log_counts != (
+            expected["web_logs_valid"],
+            expected["web_logs_invalid"],
+            expected["web_logs_duplicates"],
+        ):
             raise SourceValidationError(f"Web Log mixed-source count mismatch: {log_counts}")
-        checks.append(_check("PASS", "Mixed Clickstream source", f"{len(click_lines)} lines: {click_counts[0]} valid, {click_counts[1]} invalid, {click_counts[2]} duplicate"))
-        checks.append(_check("PASS", "Mixed Web Log source", f"{len(log_lines)} .log lines: {log_counts[0]} valid, {log_counts[1]} invalid, {log_counts[2]} duplicate"))
-        checks.append(_check("PASS", "Source layout", "Clickstream and Web Logs each use one independent source file"))
+        checks.append(
+            _check(
+                "PASS",
+                "Mixed Clickstream source",
+                f"{len(click_lines)} lines: {click_counts[0]} valid, {click_counts[1]} invalid, {click_counts[2]} duplicate",
+            )
+        )
+        checks.append(
+            _check(
+                "PASS",
+                "Mixed Web Log source",
+                f"{len(log_lines)} .log lines: {log_counts[0]} valid, {log_counts[1]} invalid, {log_counts[2]} duplicate",
+            )
+        )
+        checks.append(
+            _check(
+                "PASS",
+                "Source layout",
+                "Clickstream and Web Logs each use one independent source file",
+            )
+        )
         passed = True
     except Exception as error:
         checks.append(_check("FAIL", "Source validation", f"{type(error).__name__}: {error}"))
@@ -751,5 +1222,15 @@ def validate_sources(project_root: Path, *, write_report: bool = True) -> tuple[
     if write_report:
         report = project_root / "reports" / "source_generation_report.json"
         report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps({"status": "PASSED" if passed else "FAILED", "checks": [asdict(item) for item in checks]}, indent=2) + "\n", encoding="utf-8")
+        report.write_text(
+            json.dumps(
+                {
+                    "status": "PASSED" if passed else "FAILED",
+                    "checks": [asdict(item) for item in checks],
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return checks, passed

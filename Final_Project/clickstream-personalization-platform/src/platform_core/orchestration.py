@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
-JOBS = ("user_scd2", "weather_enrichment", "holiday_enrichment", "validate_lakehouse", "publish_serving")
+JOBS = (
+    "user_scd2",
+    "weather_enrichment",
+    "holiday_enrichment",
+    "validate_lakehouse",
+    "publish_serving",
+)
 
 
 @dataclass(frozen=True)
@@ -37,7 +42,9 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
-def run_analytics_refresh(project_root: Path, timeout_seconds: int = 1500) -> tuple[list[RefreshResult], bool, str]:
+def run_analytics_refresh(
+    project_root: Path, timeout_seconds: int = 1500
+) -> tuple[list[RefreshResult], bool, str]:
     """Submit the approved refresh jobs to the existing Spark runner in sequence."""
     run_id = _run_id()
     root = project_root / "runtime" / "airflow_requests"
@@ -50,7 +57,16 @@ def run_analytics_refresh(project_root: Path, timeout_seconds: int = 1500) -> tu
     for job in JOBS:
         request_id = f"{run_id}_{job}"
         request_path = pending / f"{request_id}.json"
-        _write_json(request_path, {"request_id": request_id, "run_id": request_id, "job": job, "requested_by": "initialization", "dag_id": "analytics_refresh"})
+        _write_json(
+            request_path,
+            {
+                "request_id": request_id,
+                "run_id": request_id,
+                "job": job,
+                "requested_by": "initialization",
+                "dag_id": "analytics_refresh",
+            },
+        )
         result_path = results_dir / f"{request_id}.json"
         while time.monotonic() < deadline:
             if result_path.is_file():
@@ -58,7 +74,11 @@ def run_analytics_refresh(project_root: Path, timeout_seconds: int = 1500) -> tu
                 if payload.get("status") == "PASSED":
                     results.append(RefreshResult("PASS", job, f"Spark runner completed {job}"))
                     break
-                detail = str(payload.get("error") or payload.get("log_path") or "Spark runner reported failure")
+                detail = str(
+                    payload.get("error")
+                    or payload.get("log_path")
+                    or "Spark runner reported failure"
+                )
                 results.append(RefreshResult("FAIL", job, detail))
                 _write_report(project_root, results, False, run_id)
                 return results, False, run_id
@@ -72,9 +92,16 @@ def run_analytics_refresh(project_root: Path, timeout_seconds: int = 1500) -> tu
     return results, True, run_id
 
 
-def _write_report(project_root: Path, results: list[RefreshResult], passed: bool, run_id: str) -> None:
+def _write_report(
+    project_root: Path, results: list[RefreshResult], passed: bool, run_id: str
+) -> None:
     """Persist a small non-secret report consumed by the Operations Console."""
     _write_json(
         project_root / "reports" / "analytics_refresh_report.json",
-        {"run_id": run_id, "status": "PASSED" if passed else "FAILED", "finished_at_utc": datetime.now(UTC).isoformat(), "results": [asdict(item) for item in results]},
+        {
+            "run_id": run_id,
+            "status": "PASSED" if passed else "FAILED",
+            "finished_at_utc": datetime.now(UTC).isoformat(),
+            "results": [asdict(item) for item in results],
+        },
     )

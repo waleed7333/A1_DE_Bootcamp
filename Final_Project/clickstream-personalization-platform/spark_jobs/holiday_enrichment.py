@@ -10,7 +10,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 import requests
-from pyspark.sql import SparkSession, functions as F
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 CATALOG = "ecommerce"
 API_URL = "https://calendarific.com/api/v2/holidays"
@@ -18,9 +19,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Enrich Clickstream with public holidays"
-    )
+    parser = argparse.ArgumentParser(description="Enrich Clickstream with public holidays")
     parser.add_argument("--run-id", required=True)
     return parser.parse_args()
 
@@ -89,10 +88,8 @@ def main() -> int:
             .distinct()
         )
 
-        keys = (
-            requested
-            .join(existing, ["country_code", "year"], "left_anti")
-            .orderBy("country_code", "year")
+        keys = requested.join(existing, ["country_code", "year"], "left_anti").orderBy(
+            "country_code", "year"
         )
 
         rows = list(keys.toLocalIterator())
@@ -119,11 +116,7 @@ def main() -> int:
                 http_status = response.status_code
                 response.raise_for_status()
 
-                values = (
-                    (response.json().get("response") or {})
-                    .get("holidays")
-                    or []
-                )
+                values = (response.json().get("response") or {}).get("holidays") or []
 
                 for item in values:
                     date_value = (item.get("date") or {}).get("iso")

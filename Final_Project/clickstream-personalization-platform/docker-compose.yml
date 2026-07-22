@@ -81,7 +81,7 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      # Topic deletion is enabled for controlled local topic lifecycle management.
       KAFKA_DELETE_TOPIC_ENABLE: "true"
       KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
     volumes:
@@ -118,7 +118,7 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      # Topic deletion is enabled for controlled local topic lifecycle management.
       KAFKA_DELETE_TOPIC_ENABLE: "true"
       KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
     volumes:
@@ -155,7 +155,7 @@ services:
       KAFKA_DEFAULT_REPLICATION_FACTOR: 3
       KAFKA_MIN_INSYNC_REPLICAS: 2
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
-      # The Streaming GeoIP repair safely recreates only the raw Web Log topic before streaming starts.
+      # Topic deletion is enabled for controlled local topic lifecycle management.
       KAFKA_DELETE_TOPIC_ENABLE: "true"
       KAFKA_HEAP_OPTS: "-Xms128m -Xmx256m"
     volumes:
@@ -241,8 +241,8 @@ services:
   minio:
     image: quay.io/minio/minio:latest
     container_name: clickstream-minio
-    # Keep the object store, including Iceberg Parquet and metadata objects, visible
-    # under data/minio/data on the host. The Streaming migration exports/reimports
+    # Keep the object store, including Iceberg Parquet and metadata objects,
+    # under data/minio/data on the host.
     # objects safely before this bind mount becomes active.
     user: "0:0"
     env_file: .env
@@ -324,7 +324,7 @@ services:
     # allow-listed Airflow requests and launches spark-submit locally when needed.
     command: ["bash", "-lc", "exec python /opt/project/src/platform_core/spark_job_runner.py"]
     # The image's inherited Jupyter check is irrelevant because this project does not run a notebook server.
-    # This check proves Spark and the pinned Iceberg runtime are available before any later job starts.
+    # This check confirms Spark and the pinned Iceberg runtime are available before later jobs start.
     healthcheck:
       test: ["CMD-SHELL", "test -x /usr/local/spark/bin/spark-submit && test -f /usr/local/spark/jars/iceberg-spark-runtime-3.5_2.12-1.6.1.jar"]
       interval: 20s
@@ -428,6 +428,10 @@ services:
       - ./data:/opt/project/data:ro
       - ./runtime:/opt/project/runtime:ro
       - ./reports:/opt/project/reports:ro
+      - ./spark_jobs:/opt/project/spark_jobs:ro
+      - ./airflow/dags:/opt/project/airflow/dags:ro
+      - ./config:/opt/project/config:ro
+      - ./docker-compose.yml:/opt/project/docker-compose.yml:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5)"]
       interval: 15s

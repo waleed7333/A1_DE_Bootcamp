@@ -16,11 +16,11 @@ import os
 import secrets
 import shutil
 import string
+import subprocess
 import sys
 import textwrap
 import threading
 import time
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
@@ -28,17 +28,28 @@ from typing import Any, Callable, TypeVar
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from platform_core.cdc import ( apply_controlled_mutations, load_and_snapshot, )  # noqa: E402
+from platform_core.cdc import (
+    apply_controlled_mutations,
+    load_and_snapshot,
+)  # noqa: E402
 from platform_core.compose import run_compose  # noqa: E402
 from platform_core.config import load_settings, read_dotenv  # noqa: E402
 from platform_core.environment import run_doctor  # noqa: E402
 from platform_core.initializer import initialize_platform  # noqa: E402
-from platform_core.operations import ( collect_status, start_platform, stop_health_collector, )# noqa: E402
+from platform_core.operations import (
+    collect_status,
+    start_platform,
+    stop_health_collector,
+)  # noqa: E402
 from platform_core.orchestration import run_analytics_refresh  # noqa: E402
 from platform_core.source_generation import LocalSourceGenerator  # noqa: E402
-from platform_core.streaming import (   stop_streaming, wait_for_initial_sources, )# noqa: E402
+from platform_core.streaming import (
+    stop_streaming,
+    wait_for_initial_sources,
+)  # noqa: E402
 
 T = TypeVar("T")
+
 
 @dataclass(frozen=True)
 class CliResult:
@@ -130,11 +141,17 @@ class StageProgress:
         message = "PASSED" if passed else "FAILED"
 
         print(self._line(completed=True, message=message))
-        #print(SECTION_LINE)
+        # print(SECTION_LINE)
         print()
 
 
-def _run_stage( step: int, total: int, title: str, action: Callable[[], T], is_successful: Callable[[T], bool], ) -> T:
+def _run_stage(
+    step: int,
+    total: int,
+    title: str,
+    action: Callable[[], T],
+    is_successful: Callable[[T], bool],
+) -> T:
     """Run one stage with live terminal progress and a final truthful status."""
     if step == 1:
         print()
@@ -204,6 +221,7 @@ def _print_results(title: str, results: list[Any], passed: bool) -> None:
     print(BETWEEN_TABLES_LINE)
     print()
 
+
 def _ensure_directories() -> None:
     """Create only folders needed by the final project layout."""
     folders = [
@@ -225,6 +243,7 @@ def _ensure_directories() -> None:
     for folder in folders:
         (PROJECT_ROOT / folder).mkdir(parents=True, exist_ok=True)
 
+
 def _remove_path(path: Path) -> None:
     """Remove one dynamic file or directory and fail loudly if it remains."""
     if not path.exists():
@@ -238,10 +257,10 @@ def _remove_path(path: Path) -> None:
     if path.exists():
         raise RuntimeError(f"Could not remove dynamic path: {path}")
 
+
 def _placeholder(value: str | None) -> bool:
     return not value or any(
-        token in value.upper()
-        for token in ("CHANGE_ME", "REPLACE_ME", "YOUR_", "<", ">")
+        token in value.upper() for token in ("CHANGE_ME", "REPLACE_ME", "YOUR_", "<", ">")
     )
 
 
@@ -430,10 +449,16 @@ def _mark_streaming_stopped() -> None:
     payload = _read_json(status_path)
 
     payload["status"] = "STOPPED"
-    payload["stopped_at_utc"] = time.strftime( "%Y-%m-%dT%H:%M:%SZ", time.gmtime(), )
+    payload["stopped_at_utc"] = time.strftime(
+        "%Y-%m-%dT%H:%M:%SZ",
+        time.gmtime(),
+    )
 
     status_path.parent.mkdir(parents=True, exist_ok=True)
-    status_path.write_text( json.dumps(payload, indent=2) + "\n", encoding="utf-8", )
+    status_path.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def command_init() -> int:
@@ -537,9 +562,7 @@ def command_init() -> int:
     _print_results("STREAMING START", streaming_results, streaming_ok)
 
     if not streaming_ok:
-        print(
-            "Read runtime/streaming_status.json and runtime/logs/streaming_ingestion.log."
-        )
+        print("Read runtime/streaming_status.json and runtime/logs/streaming_ingestion.log.")
         return 2
 
     mutation_result = _run_stage(
@@ -571,7 +594,11 @@ def command_init() -> int:
 
     initial_load_ok = getattr(initial_load, "status", "FAIL") == "PASS"
 
-    _print_results( "STREAMING INITIAL LOAD", [initial_load], initial_load_ok, )
+    _print_results(
+        "STREAMING INITIAL LOAD",
+        [initial_load],
+        initial_load_ok,
+    )
 
     if not initial_load_ok:
         return 2
@@ -632,9 +659,7 @@ def command_start() -> int:
     print(f"Platform status: {snapshot.get('overall_status', 'UNKNOWN')}")
 
     if overall_ok:
-        print(
-            "Existing data and checkpoints were preserved. Streaming is active again."
-        )
+        print("Existing data and checkpoints were preserved. Streaming is active again.")
 
     return 0 if overall_ok else 2
 
@@ -688,6 +713,7 @@ def command_stop() -> int:
 
     return 0 if stop_ok else 2
 
+
 def _make_local_state_writable() -> None:
     """Make Docker-created local files removable by the current host user.
 
@@ -735,14 +761,13 @@ def _make_local_state_writable() -> None:
         except OSError:
             pass
 
-    # Docker-side permission repair. This is the important part for MinIO and
+    # Docker-side permission normalization for MinIO and
     # ClickHouse bind-mounted files created by container users.
     uid = os.getuid() if hasattr(os, "getuid") else 1000
     gid = os.getgid() if hasattr(os, "getgid") else 1000
 
     container_targets = [
-        f"/project/{path.relative_to(PROJECT_ROOT).as_posix()}"
-        for path in existing_targets
+        f"/project/{path.relative_to(PROJECT_ROOT).as_posix()}" for path in existing_targets
     ]
 
     target_list = " ".join(f'"{path}"' for path in container_targets)
@@ -761,12 +786,27 @@ done
     # Use the already-installed ClickHouse image as a small root helper.
     # This avoids requiring sudo and avoids pulling a new image.
     subprocess.run(
-        [ "docker", "run", "--rm", "--user", "0:0", "-v", f"{PROJECT_ROOT}:/project", "--entrypoint", "/bin/sh", "clickhouse/clickhouse-server:24.8.14.39", "-c", permission_script, ],
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "-v",
+            f"{PROJECT_ROOT}:/project",
+            "--entrypoint",
+            "/bin/sh",
+            "clickhouse/clickhouse-server:24.8.14.39",
+            "-c",
+            permission_script,
+        ],
         cwd=PROJECT_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
+
+
 def command_reset() -> int:
     """Return the project to a clean first-run state."""
     _ensure_directories()
@@ -814,23 +854,57 @@ def command_reset() -> int:
                 PROJECT_ROOT / "data/clickhouse/log",
             ]
 
-            non_empty = [ str(path.relative_to(PROJECT_ROOT)) for path in storage_paths if path.exists() and any(path.iterdir()) ]
+            non_empty = [
+                str(path.relative_to(PROJECT_ROOT))
+                for path in storage_paths
+                if path.exists() and any(path.iterdir())
+            ]
 
-            if non_empty: return ( False, "Reset finished but these storage folders are not empty: " + ", ".join(non_empty), )
+            if non_empty:
+                return (
+                    False,
+                    "Reset finished but these storage folders are not empty: "
+                    + ", ".join(non_empty),
+                )
 
-            return ( True, "All dynamic local data was removed; storage folders are empty", )
+            return (
+                True,
+                "All dynamic local data was removed; storage folders are empty",
+            )
 
         except Exception as error:
             return False, f"{type(error).__name__}: {error}"
 
-    local_result = _run_stage( 2, 2, "Removing local state", remove_local_state, lambda result: result[0], )
+    local_result = _run_stage(
+        2,
+        2,
+        "Removing local state",
+        remove_local_state,
+        lambda result: result[0],
+    )
 
     local_ok, local_detail = local_result
 
     results = [
-        CliResult( "PASS" if docker_ok else "FAIL", "Docker state", ( "Containers and Docker volumes removed" if docker_ok else (docker_output[-700:] or "docker compose down failed") ), ),
-        CliResult( "PASS" if local_ok else "FAIL", "Local dynamic state", local_detail, ),
-        CliResult( "INFO", "Preserved reference data", ".env, Product Catalog, GeoLite2 database, source code, and documentation", ),
+        CliResult(
+            "PASS" if docker_ok else "FAIL",
+            "Docker state",
+            (
+                "Containers and Docker volumes removed"
+                if docker_ok
+                else (docker_output[-700:] or "docker compose down failed")
+            ),
+        ),
+        CliResult(
+            "PASS" if local_ok else "FAIL",
+            "Local dynamic state",
+            local_detail,
+        ),
+        CliResult(
+            "INFO",
+            "Preserved reference data",
+            ".env, Product Catalog, GeoLite2 database, source code, and documentation",
+        ),
     ]
 
     reset_ok = docker_ok and local_ok

@@ -71,7 +71,9 @@ def _status_path(project_root: Path) -> Path:
 
 def _cursor_path(project_root: Path) -> Path:
     settings = load_settings(project_root)
-    return project_root / settings["streaming"]["source_publisher_state"] / "clickstream_cursor.json"
+    return (
+        project_root / settings["streaming"]["source_publisher_state"] / "clickstream_cursor.json"
+    )
 
 
 def _clickstream_path(project_root: Path) -> Path:
@@ -129,9 +131,7 @@ def _publish_clickstream(project_root: Path) -> StreamingCheck:
 
     settings = load_settings(project_root)
     producer = Producer(
-        {
-            "bootstrap.servers": settings["runtime"]["host"]["kafka_bootstrap_servers"]
-        }
+        {"bootstrap.servers": settings["runtime"]["host"]["kafka_bootstrap_servers"]}
     )
     topic = settings["kafka"]["topics"]["clickstream"]
     delivery_errors: list[str] = []
@@ -192,6 +192,7 @@ def _publish_clickstream(project_root: Path) -> StreamingCheck:
             f"{type(error).__name__}: {error}",
         )
 
+
 def _start_spark(project_root: Path, run_id: str) -> StreamingCheck:
     """Start one background streaming query in the existing Spark container."""
     if _spark_process_running(project_root):
@@ -209,7 +210,9 @@ def _start_spark(project_root: Path, run_id: str) -> StreamingCheck:
         timeout=30,
     )
     if not ok:
-        return StreamingCheck("FAIL", "Spark streaming process", output[-500:] or "spark-submit could not start")
+        return StreamingCheck(
+            "FAIL", "Spark streaming process", output[-500:] or "spark-submit could not start"
+        )
     return StreamingCheck("PASS", "Spark streaming process", f"Started run {run_id}")
 
 
@@ -258,6 +261,7 @@ def _wait_for_heartbeat(
         f"Spark did not start within {timeout_seconds} seconds; last status={last_state}",
     )
 
+
 def _live_generator_pid_path(project_root: Path) -> Path:
     return project_root / "runtime" / "source_publishers" / "live_generator.pid"
 
@@ -280,15 +284,11 @@ def _start_live_generator(project_root: Path) -> StreamingCheck:
         return StreamingCheck("PASS", "Live source generator", "Already running")
 
     settings = load_settings(project_root)
-    interval = int(
-        settings["streaming"].get("live_generation_interval_seconds", 20)
-    )
+    interval = int(settings["streaming"].get("live_generation_interval_seconds", 20))
 
     environment = os.environ.copy()
     source_path = str(project_root / "src")
-    environment["PYTHONPATH"] = (
-        source_path + os.pathsep + environment.get("PYTHONPATH", "")
-    )
+    environment["PYTHONPATH"] = source_path + os.pathsep + environment.get("PYTHONPATH", "")
 
     log_path = project_root / "runtime" / "logs" / "live_source_generator.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -367,9 +367,7 @@ def wait_for_initial_sources(
         processed = status.get("processed_source_records", {}) or {}
 
         missing = sorted(
-            source
-            for source in required_sources
-            if int(processed.get(source, 0) or 0) == 0
+            source for source in required_sources if int(processed.get(source, 0) or 0) == 0
         )
 
         if state == "RUNNING" and not missing:
@@ -393,6 +391,7 @@ def wait_for_initial_sources(
         "Initial streaming load",
         "Timed out before Spark processed all sources",
     )
+
 
 def start_streaming(
     project_root: Path,
@@ -431,10 +430,30 @@ def verify_streaming(project_root: Path) -> tuple[list[StreamingCheck], bool, st
     status = _read_json(_status_path(project_root)) or {}
     checks: list[StreamingCheck] = []
     if str(status.get("status", "")).upper() == "RUNNING":
-        checks.append(StreamingCheck("PASS", "Spark streaming status", f"Last batch: {status.get('last_micro_batch_id', 'not recorded')}"))
+        checks.append(
+            StreamingCheck(
+                "PASS",
+                "Spark streaming status",
+                f"Last batch: {status.get('last_micro_batch_id', 'not recorded')}",
+            )
+        )
     else:
-        checks.append(StreamingCheck("FAIL", "Spark streaming status", str(status.get("error", "No running heartbeat"))))
-    checks.append(StreamingCheck("PASS" if _spark_process_running(project_root) else "FAIL", "Spark process", "streaming_ingestion.py detected" if _spark_process_running(project_root) else "No streaming process detected"))
+        checks.append(
+            StreamingCheck(
+                "FAIL", "Spark streaming status", str(status.get("error", "No running heartbeat"))
+            )
+        )
+    checks.append(
+        StreamingCheck(
+            "PASS" if _spark_process_running(project_root) else "FAIL",
+            "Spark process",
+            (
+                "streaming_ingestion.py detected"
+                if _spark_process_running(project_root)
+                else "No streaming process detected"
+            ),
+        )
+    )
     passed = all(check.status == "PASS" for check in checks)
     return checks, passed, str(status.get("run_id", "unknown"))
 
@@ -466,9 +485,7 @@ def stop_streaming(project_root: Path) -> tuple[list[StreamingCheck], bool]:
     _write_json(_status_path(project_root), status)
 
     detail = (
-        "Stopped streaming process"
-        if ok
-        else output[-400:] or "Unable to stop streaming process"
+        "Stopped streaming process" if ok else output[-400:] or "Unable to stop streaming process"
     )
 
     spark_check = StreamingCheck(
@@ -482,6 +499,8 @@ def stop_streaming(project_root: Path) -> tuple[list[StreamingCheck], bool]:
     return checks, all(check.status == "PASS" for check in checks)
 
 
-def start_operational_streaming(project_root: Path, timeout_seconds: int = 120) -> tuple[list[StreamingCheck], bool, str]:
+def start_operational_streaming(
+    project_root: Path, timeout_seconds: int = 120
+) -> tuple[list[StreamingCheck], bool, str]:
     """Compatibility alias used by the simplified platform workflow."""
     return start_streaming(project_root, timeout_seconds)
